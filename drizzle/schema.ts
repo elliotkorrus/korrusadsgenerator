@@ -40,7 +40,7 @@ export const angleBank = sqliteTable("angle_bank", {
 
 export const uploadQueue = sqliteTable("upload_queue", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  brand: text("brand").notNull().default("KORRUS"),
+  brand: text("brand").notNull().default("OIO"),
   initiative: text("initiative").notNull().default(""),
   variation: text("variation").notNull().default("V1"),
   angle: text("angle").notNull().default(""),
@@ -73,6 +73,7 @@ export const uploadQueue = sqliteTable("upload_queue", {
   uploadedAt: text("uploaded_at"),
   uploadedBy: integer("uploaded_by"),
   conceptKey: text("concept_key"),
+  handle: text("handle"), // Which FB/IG handle to run through (e.g. whitelisted creator handle). Does not affect ad name.
   ...timestamps,
 });
 

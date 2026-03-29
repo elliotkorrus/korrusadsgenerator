@@ -47,18 +47,18 @@ export function parseFilenameToFields(
     const url = new URL(input);
     result.fileUrl = input;
     const parts = url.pathname.split("/");
-    filename = parts[parts.length - 1] || input;
+    filename = decodeURIComponent(parts[parts.length - 1] || input);
   } catch {
     // not a URL
   }
 
-  // Strip extension for the filename field
+  // Strip extension
   const ext = filename.match(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i);
   const cleanName = filename.replace(
     /\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i,
     ""
   );
-  result.filename = cleanName;
+  // filename will be set at end, after dimension token is stripped
 
   // Content type from extension
   if (ext) {
@@ -69,36 +69,9 @@ export function parseFilenameToFields(
     else if (e === "gif") result.contentType = "GIF";
   }
 
-  const upper = filename.toUpperCase();
-  const lower = filename.toLowerCase();
-
-  // Brand
-  if (upper.includes("KORRUS") || upper.includes("KRS"))
-    result.brand = "KORRUS";
-
-  // Product
-  if (upper.includes("SERUM")) result.product = "SERUM";
-  else if (upper.includes("OIO")) result.product = "OIO";
-
-  // Dimensions
-  const dimMatch = filename.match(/(\d+)\s*x\s*(\d+)/i);
-  if (dimMatch) {
-    const d = `${dimMatch[1]}:${dimMatch[2]}`;
-    if (["9:16", "4:5", "1:1", "16:9"].includes(d)) result.dimensions = d;
-  }
-  if (!result.dimensions) {
-    if (/story|reel/i.test(lower)) result.dimensions = "9:16";
-    else if (/feed/i.test(lower)) result.dimensions = "4:5";
-    else if (/square/i.test(lower)) result.dimensions = "1:1";
-    else if (/landscape/i.test(lower)) result.dimensions = "16:9";
-  }
-
-  // Variation
-  const varMatch = filename.match(/\b(V\d+[A-Z]?)\b/i);
-  if (varMatch) result.variation = varMatch[1].toUpperCase();
-
-  // Creative type
-  const typeMap: Record<string, string> = {
+  // Creative type keywords (scanned against full original filename, before splitting)
+  const lower = cleanName.toLowerCase();
+  const creativeTypeMap: Record<string, string> = {
     ugc: "UGC",
     meme: "MEME",
     gfx: "GFX",
@@ -109,26 +82,129 @@ export function parseFilenameToFields(
     "ai-gen": "AI",
     catalog: "CATALOG",
   };
-  for (const [keyword, type] of Object.entries(typeMap)) {
+  for (const [keyword, type] of Object.entries(creativeTypeMap)) {
     if (lower.includes(keyword)) {
       result.creativeType = type;
       break;
     }
   }
 
-  // Source
-  if (/\bugc\b/i.test(lower)) result.source = "UGC";
-  else if (/\bstudio\b/i.test(lower)) result.source = "Studio";
-  else if (/\bstock\b/i.test(lower)) result.source = "Stock";
-  else if (/\bai\b/i.test(lower)) result.source = "AI";
+  // Known source tokens (case-insensitive exact-token match)
+  const SOURCE_MAP: Record<string, string> = {
+    ng: "NG",
+    paid: "PAID",
+    ugc: "UGC",
+    organic: "ORG",
+    org: "ORG",
+    studio: "STUDIO",
+    stock: "STOCK",
+    ai: "AI",
+    creator: "CREATOR",
+  };
 
-  // Date (6-digit MMDDYY)
-  const dateMatch = filename.match(/\b(\d{6})\b/);
-  if (dateMatch) result.date = dateMatch[1];
+  // Known dimension values after conversion
+  const VALID_DIMS = new Set(["9:16", "4:5", "1:1", "16:9"]);
 
-  // Initiative from KRS-NNNN-Name pattern
-  const initMatch = filename.match(/KRS-\d{4}-([A-Za-z0-9_-]+)/i);
-  if (initMatch) result.initiative = initMatch[1];
+  // Split the clean name into tokens by underscore
+  const tokens = cleanName.split("_");
+
+  // Track which token indices have been claimed
+  const claimed = new Set<number>();
+
+  // --- Token 0: Brand ---
+  // Filename prefix "korrus" or "krs" identifies the company; ad brand is always "OIO"
+  if (tokens.length > 0) {
+    const t0 = tokens[0].toUpperCase();
+    if (t0 === "KORRUS" || t0 === "KRS" || t0 === "OIO") {
+      result.brand = "OIO";
+      claimed.add(0);
+    }
+  }
+  // Default product
+  result.product = "OIO";
+
+  // --- Last token matching /^\d+x\d+$/i: Dimensions ---
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (/^\d+x\d+$/i.test(tokens[i])) {
+      const parts = tokens[i].toLowerCase().split("x");
+      const candidate = `${parts[0]}:${parts[1]}`;
+      if (VALID_DIMS.has(candidate)) {
+        result.dimensions = candidate;
+        claimed.add(i);
+      }
+      break;
+    }
+  }
+
+  // --- Token matching /^\d{4}-\d{2}$/: Date (YYYY-MM) ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d{4}-\d{2}$/.test(tokens[i])) {
+      result.date = tokens[i];
+      claimed.add(i);
+      break;
+    }
+  }
+
+  // --- Token matching known sources (case-insensitive) ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    const tl = tokens[i].toLowerCase();
+    if (tl in SOURCE_MAP) {
+      result.source = SOURCE_MAP[tl];
+      claimed.add(i);
+      break;
+    }
+  }
+
+  // --- Initiative: token "s" (or similar) followed by numeric token ---
+  // Pattern: token[i] is a short alpha label AND token[i+1] is purely numeric
+  for (let i = 0; i < tokens.length - 1; i++) {
+    if (claimed.has(i) || claimed.has(i + 1)) continue;
+    if (/^[a-zA-Z]{1,3}$/.test(tokens[i]) && /^\d+$/.test(tokens[i + 1])) {
+      result.initiative = `${tokens[i]}_${tokens[i + 1]}`;
+      claimed.add(i);
+      claimed.add(i + 1);
+      break;
+    }
+  }
+
+  // --- Variation: single digit token after initiative ---
+  // Find the last claimed initiative index and look one ahead
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    if (/^\d$/.test(tokens[i])) {
+      result.variation = `v${tokens[i]}`;
+      claimed.add(i);
+      break;
+    }
+  }
+
+  // --- Remaining unclaimed tokens = angle ---
+  const angleTokens: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (!claimed.has(i)) {
+      angleTokens.push(tokens[i]);
+    }
+  }
+  if (angleTokens.length > 0) {
+    result.angle = angleTokens.join("_");
+  }
+
+  // --- creativeType default ---
+  if (!result.creativeType) result.creativeType = "ESTATIC";
+
+  // --- Filename: cleanName minus the dimension token ---
+  // Strip the dimension token so that 9x16 and 1x1 variants share the same filename
+  // (and therefore the same conceptKey), enabling proper grouping.
+  if (result.dimensions) {
+    const dimToken = result.dimensions.replace(":", "x"); // e.g. "9x16"
+    const filenameTokens = tokens.filter(
+      (t) => t.toLowerCase() !== dimToken.toLowerCase()
+    );
+    result.filename = filenameTokens.join("_");
+  } else {
+    result.filename = cleanName;
+  }
 
   return result;
 }

@@ -9,8 +9,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH ?? path.join(__dirname, "..", "data.db");
 
 const sqlite = new Database(dbPath);
-sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("journal_mode = DELETE"); // Avoid WAL split-brain between server and CLI
 sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("synchronous = NORMAL");
+sqlite.pragma("busy_timeout = 5000");
 
 export const db = drizzle(sqlite, { schema });
 export { schema };

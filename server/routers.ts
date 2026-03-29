@@ -48,7 +48,7 @@ const uploadQueueRouter = t.router({
   create: publicProcedure
     .input(
       z.object({
-        brand: z.string().default("KORRUS"),
+        brand: z.string().default("OIO"),
         initiative: z.string().default(""),
         variation: z.string().default("V1"),
         angle: z.string().default(""),
@@ -67,6 +67,7 @@ const uploadQueueRouter = t.router({
         bodyCopy: z.string().optional(),
         fileUrl: z.string().optional(),
         conceptKey: z.string().optional(),
+        handle: z.string().optional().nullable(),
       })
     )
     .mutation(({ input }) => {
@@ -118,6 +119,7 @@ const uploadQueueRouter = t.router({
         headline: z.string().optional().nullable(),
         bodyCopy: z.string().optional().nullable(),
         fileUrl: z.string().optional().nullable(),
+        handle: z.string().optional().nullable(),
         status: z
           .enum(["draft", "ready", "uploading", "uploaded", "error"])
           .optional(),
@@ -153,11 +155,19 @@ const uploadQueueRouter = t.router({
         date: merged.date,
       });
 
+      // Recompute conceptKey (all naming fields except dimensions)
+      const newConceptKey = [
+        merged.brand, merged.initiative, merged.variation, merged.angle,
+        merged.source, merged.product, merged.contentType, merged.creativeType,
+        merged.copySlug, merged.filename, merged.date,
+      ].join("__");
+
       return db
         .update(schema.uploadQueue)
         .set({
           ...updates,
           generatedAdName,
+          conceptKey: newConceptKey,
           updatedAt: sql`datetime('now')`,
         })
         .where(eq(schema.uploadQueue.id, id))
