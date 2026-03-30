@@ -68,6 +68,8 @@ const uploadQueueRouter = t.router({
         fileUrl: z.string().optional(),
         conceptKey: z.string().optional(),
         handle: z.string().optional().nullable(),
+        cta: z.string().optional().nullable(),
+        displayUrl: z.string().optional().nullable(),
       })
     )
     .mutation(({ input }) => {
@@ -120,6 +122,8 @@ const uploadQueueRouter = t.router({
         bodyCopy: z.string().optional().nullable(),
         fileUrl: z.string().optional().nullable(),
         handle: z.string().optional().nullable(),
+        cta: z.string().optional().nullable(),
+        displayUrl: z.string().optional().nullable(),
         status: z
           .enum(["draft", "ready", "uploading", "uploaded", "error"])
           .optional(),
@@ -514,6 +518,12 @@ const metaSettingsRouter = t.router({
         accessToken: z.string().optional().nullable(),
         adAccountId: z.string().optional().nullable(),
         pageId: z.string().optional().nullable(),
+        instagramUserId: z.string().optional().nullable(),
+        instagramHandle: z.string().optional().nullable(),
+        defaultDestinationUrl: z.string().optional().nullable(),
+        defaultDisplayUrl: z.string().optional().nullable(),
+        defaultCta: z.string().optional().nullable(),
+        utmTemplate: z.string().optional().nullable(),
       })
     )
     .mutation(({ input }) => {
@@ -529,8 +539,25 @@ const metaSettingsRouter = t.router({
       return db.insert(schema.metaSettings).values(input).returning().get();
     }),
 
-  // TODO: validateToken — call Meta Graph API GET /me
-  // TODO: getAccountInfo — call Meta Graph API GET /{adAccountId}
+  getAdSets: publicProcedure.query(async () => {
+    const settings = db.select().from(schema.metaSettings).get();
+    if (!settings?.accessToken || !settings?.adAccountId) return [];
+    try {
+      const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?fields=id,name,status,campaign{id,name}&filtering=[{"field":"status","operator":"IN","value":["ACTIVE","PAUSED"]}]&access_token=${settings.accessToken}&limit=100`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.data || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        status: s.status,
+        campaignId: s.campaign?.id,
+        campaignName: s.campaign?.name,
+      }));
+    } catch {
+      return [];
+    }
+  }),
 });
 
 // ─── Root Router ────────────────────────────────────────────────

@@ -99,6 +99,8 @@ type QueueItem = {
   headline: string | null;
   bodyCopy: string | null;
   handle: string | null;
+  cta: string | null;
+  displayUrl: string | null;
   fileUrl: string | null;
   fileKey: string | null;
   fileMimeType: string | null;
@@ -444,6 +446,21 @@ function ConceptCard({
               { label: "Filename", el: <InlineText value={shared.filename || ""} onSave={(v) => onUpdateField("filename", v)} disabled={isGroupLocked} mono placeholder="filename" /> },
               { label: "Date", el: <InlineText value={shared.date || ""} onSave={(v) => onUpdateField("date", v)} disabled={isGroupLocked} mono placeholder="2026-03" /> },
               { label: "Handle", el: <InlineText value={shared.handle || ""} onSave={(v) => onUpdateField("handle", v)} disabled={isGroupLocked} placeholder="@creator" /> },
+            ].map(({ label, el }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <span className="text-[10px] flex-shrink-0 w-14" style={{ color: "var(--text-muted)" }}>{label}</span>
+                {el}
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] uppercase font-semibold mt-2" style={{ letterSpacing: "0.08em", color: "var(--text-muted)" }}>Meta Upload</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            {[
+              { label: "Ad Set ID", el: <InlineText value={shared.adSetId || ""} onSave={(v) => onUpdateField("adSetId", v)} disabled={isGroupLocked} mono placeholder="120..." /> },
+              { label: "Ad Set", el: <InlineText value={shared.adSetName || ""} onSave={(v) => onUpdateField("adSetName", v)} disabled={isGroupLocked} placeholder="Ad set name" /> },
+              { label: "Dest URL", el: <InlineText value={shared.destinationUrl || ""} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /> },
+              { label: "Display", el: <InlineText value={shared.displayUrl || ""} onSave={(v) => onUpdateField("displayUrl", v)} disabled={isGroupLocked} placeholder="korrus.com" /> },
+              { label: "CTA", el: <InlineText value={shared.cta || ""} onSave={(v) => onUpdateField("cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /> },
             ].map(({ label, el }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <span className="text-[10px] flex-shrink-0 w-14" style={{ color: "var(--text-muted)" }}>{label}</span>
@@ -1960,6 +1977,9 @@ function AddAdDialog({
     },
   });
 
+  const { data: metaDefaults } = trpc.meta.get.useQuery();
+  const { data: adSets } = trpc.meta.getAdSets.useQuery();
+
   const [form, setForm] = useState({
     brand: "OIO",
     initiative: "",
@@ -1978,7 +1998,26 @@ function AddAdDialog({
     headline: "",
     bodyCopy: "",
     fileUrl: "",
+    destinationUrl: "",
+    displayUrl: "",
+    cta: "SHOP_NOW",
+    handle: "",
   });
+
+  // Auto-populate from meta settings defaults once loaded
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
+  useEffect(() => {
+    if (metaDefaults && !defaultsApplied) {
+      setForm((prev) => ({
+        ...prev,
+        destinationUrl: metaDefaults.defaultDestinationUrl || prev.destinationUrl,
+        displayUrl: metaDefaults.defaultDisplayUrl || prev.displayUrl,
+        cta: metaDefaults.defaultCta || prev.cta,
+        handle: metaDefaults.instagramHandle || prev.handle,
+      }));
+      setDefaultsApplied(true);
+    }
+  }, [metaDefaults, defaultsApplied]);
 
   const [parseInput, setParseInput] = useState("");
   const [parsed, setParsed] = useState(false);
@@ -2098,14 +2137,53 @@ function AddAdDialog({
           <FormInput label="Date (MMDDYY)" value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
         </div>
 
-        {/* Extra fields */}
+        {/* Copy & Headline */}
         <div className="grid grid-cols-2 gap-3">
-          <FormInput label="Headline" value={form.headline} onChange={(v) => setForm({ ...form, headline: v })} />
-          <FormInput label="Body Copy" value={form.bodyCopy} onChange={(v) => setForm({ ...form, bodyCopy: v })} />
-          <FormInput label="File URL" value={form.fileUrl} onChange={(v) => setForm({ ...form, fileUrl: v })} />
-          <FormInput label="Ad Set ID" value={form.adSetId} onChange={(v) => setForm({ ...form, adSetId: v })} />
+          <FormInput label="Headline" value={form.headline} onChange={(v) => setForm({ ...form, headline: v })} placeholder="Auto-filled from Copy Slug" />
+          <FormInput label="Body Copy" value={form.bodyCopy} onChange={(v) => setForm({ ...form, bodyCopy: v })} placeholder="Auto-filled from Copy Slug" />
         </div>
-        <FormInput label="Ad Set Name" value={form.adSetName} onChange={(v) => setForm({ ...form, adSetName: v })} />
+
+        {/* Meta Upload Settings */}
+        <div className="rounded-sm p-3 space-y-3" style={{ background: "var(--surface-0)", border: "1px solid var(--surface-3)" }}>
+          <span className="text-[10px] uppercase font-semibold" style={{ letterSpacing: "0.08em", color: "var(--text-muted)" }}>Meta Upload Settings</span>
+          <div className="grid grid-cols-2 gap-3">
+            {adSets && adSets.length > 0 ? (
+              <FormSelect
+                label="Ad Set"
+                value={form.adSetId}
+                options={adSets.map((s: any) => ({ value: s.id, label: `${s.name} (${s.status})` }))}
+                onChange={(v) => {
+                  const match = adSets.find((s: any) => s.id === v);
+                  setForm({ ...form, adSetId: v, adSetName: match?.name || "" });
+                }}
+              />
+            ) : (
+              <FormInput label="Ad Set ID" value={form.adSetId} onChange={(v) => setForm({ ...form, adSetId: v })} placeholder="120241241729400419" />
+            )}
+            <FormInput label="Ad Set Name" value={form.adSetName} onChange={(v) => setForm({ ...form, adSetName: v })} />
+            <FormInput label="Destination URL" value={form.destinationUrl} onChange={(v) => setForm({ ...form, destinationUrl: v })} placeholder="https://www.korrus.com/collections/store" />
+            <FormInput label="Display Link" value={form.displayUrl} onChange={(v) => setForm({ ...form, displayUrl: v })} placeholder="korrus.com" />
+            <FormSelect
+              label="CTA"
+              value={form.cta}
+              options={[
+                { value: "SHOP_NOW", label: "Shop Now" },
+                { value: "LEARN_MORE", label: "Learn More" },
+                { value: "SIGN_UP", label: "Sign Up" },
+                { value: "SUBSCRIBE", label: "Subscribe" },
+                { value: "GET_OFFER", label: "Get Offer" },
+                { value: "CONTACT_US", label: "Contact Us" },
+                { value: "DOWNLOAD", label: "Download" },
+                { value: "ORDER_NOW", label: "Order Now" },
+                { value: "BOOK_NOW", label: "Book Now" },
+                { value: "NO_BUTTON", label: "No Button" },
+              ]}
+              onChange={(v) => setForm({ ...form, cta: v })}
+            />
+            <FormInput label="Handle" value={form.handle} onChange={(v) => setForm({ ...form, handle: v })} placeholder="korruscircadian" />
+          </div>
+          <FormInput label="File URL" value={form.fileUrl} onChange={(v) => setForm({ ...form, fileUrl: v })} placeholder="/uploads/..." />
+        </div>
 
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm transition-colors" style={{ color: "var(--text-secondary)" }}>

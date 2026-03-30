@@ -116,18 +116,67 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
   if (!ad) { res.status(404).json({ error: "Ad not found" }); return; }
   if (ad.status !== "ready") { res.status(400).json({ error: "Ad must be in 'ready' status" }); return; }
 
+  // Fetch meta settings for defaults
+  const metaSettings = db.select().from(schema.metaSettings).get();
+
+  // Resolve headline/bodyCopy from copy library if empty on the ad
+  let headline = ad.headline || "";
+  let bodyCopy = ad.bodyCopy || "";
+  if ((!headline || !bodyCopy) && ad.copySlug) {
+    const copyRow = db.select().from(schema.copyLibrary)
+      .where(eq(schema.copyLibrary.copySlug, ad.copySlug)).get();
+    if (copyRow) {
+      if (!headline) headline = copyRow.headline;
+      if (!bodyCopy) bodyCopy = copyRow.bodyCopy;
+    }
+  }
+
+  // Resolve fields with fallback to meta_settings defaults
+  const destinationUrl = ad.destinationUrl || metaSettings?.defaultDestinationUrl || "";
+  const displayUrl = ad.displayUrl || metaSettings?.defaultDisplayUrl || "";
+  const cta = ad.cta || metaSettings?.defaultCta || "SHOP_NOW";
+  const instagramUserId = metaSettings?.instagramUserId || "";
+  const pageId = metaSettings?.pageId || "";
+  const utmTemplate = metaSettings?.utmTemplate || "";
+
+  // Validate required fields
+  const missing: string[] = [];
+  if (!ad.fileUrl) missing.push("fileUrl");
+  if (!ad.adSetId) missing.push("adSetId");
+  if (!destinationUrl) missing.push("destinationUrl");
+  if (!headline) missing.push("headline");
+  if (!bodyCopy) missing.push("bodyCopy");
+  if (!pageId) missing.push("pageId (set in Meta Settings)");
+  if (!instagramUserId) missing.push("instagramUserId (set in Meta Settings)");
+  if (!metaSettings?.accessToken) missing.push("accessToken (set in Meta Settings)");
+
+  if (missing.length > 0) {
+    res.status(400).json({
+      success: false,
+      error: `Missing required fields: ${missing.join(", ")}. Please fill these in on the ad or set defaults in Meta Settings.`,
+    });
+    return;
+  }
+
   // Build the payload MANUS will receive
   const adPayload = {
+    adId: ad.id,
     adName: ad.generatedAdName,
     fileUrl: ad.fileUrl,
-    headline: ad.headline,
-    bodyCopy: ad.bodyCopy,
+    headline,
+    bodyCopy,
     adSetId: ad.adSetId,
     adSetName: ad.adSetName,
-    destinationUrl: ad.destinationUrl,
+    destinationUrl,
+    displayUrl,
+    cta,
+    instagramUserId,
+    pageId,
+    utmTemplate,
     product: ad.product,
     dimensions: ad.dimensions,
     contentType: ad.contentType,
+    conceptKey: ad.conceptKey,
   };
 
   const manusWebhookUrl = process.env.MANUS_WEBHOOK_URL;

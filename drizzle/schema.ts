@@ -74,6 +74,8 @@ export const uploadQueue = sqliteTable("upload_queue", {
   uploadedBy: integer("uploaded_by"),
   conceptKey: text("concept_key"),
   handle: text("handle"), // Which FB/IG handle to run through (e.g. whitelisted creator handle). Does not affect ad name.
+  cta: text("cta"), // Per-ad CTA override (e.g. "SHOP_NOW"), falls back to meta_settings default
+  displayUrl: text("display_url"), // Per-ad display URL override (e.g. "korrus.com"), falls back to default
   ...timestamps,
 });
 
@@ -84,6 +86,13 @@ export const metaSettings = sqliteTable("meta_settings", {
   accessToken: text("access_token"),
   adAccountId: text("ad_account_id"),
   pageId: text("page_id"),
+  // Upload defaults
+  instagramUserId: text("instagram_user_id"),
+  instagramHandle: text("instagram_handle"),
+  defaultDestinationUrl: text("default_destination_url"),
+  defaultDisplayUrl: text("default_display_url"),
+  defaultCta: text("default_cta"),
+  utmTemplate: text("utm_template"),
   ...timestamps,
 });
 
