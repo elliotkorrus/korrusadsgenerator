@@ -6,6 +6,7 @@ import AngleBank from "./pages/AngleBank";
 import UploadHistory from "./pages/UploadHistory";
 import FieldOptions from "./pages/FieldOptions";
 import MetaSettings from "./pages/MetaSettings";
+import NamingGuide from "./pages/NamingGuide";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/history" element={<UploadHistory />} />
           <Route path="/field-options" element={<FieldOptions />} />
           <Route path="/settings" element={<MetaSettings />} />
+          <Route path="/naming-guide" element={<NamingGuide />} />
         </Routes>
       </DashboardLayout>
     </BrowserRouter>
