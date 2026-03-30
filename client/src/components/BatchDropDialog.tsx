@@ -72,6 +72,8 @@ const FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[
   { key: "variation", label: "Var.", width: "50px" },
   { key: "angle", label: "Angle", width: "100px" },
   { key: "source", label: "Source", width: "100px" },
+  { key: "product", label: "Product", width: "80px" },
+  { key: "copySlug", label: "Copy Slug", width: "100px" },
   { key: "dimensions", label: "Dims", width: "65px" },
   { key: "date", label: "Date", width: "80px" },
   { key: "contentType", label: "Format", width: "70px" },
@@ -79,7 +81,7 @@ const FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[
 ];
 
 // Fields that get dropdown selects
-const SELECT_FIELDS = new Set(["source", "angle", "contentType", "creativeType", "dimensions"]);
+const SELECT_FIELDS = new Set(["source", "angle", "contentType", "creativeType", "dimensions", "product", "copySlug"]);
 
 function cellStyle(value: string | undefined): React.CSSProperties {
   if (value && value.trim()) {
@@ -154,7 +156,9 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
   const contentTypeOpts = fieldOptions.filter((o: any) => o.field === "contentType" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
   const creativeTypeOpts = fieldOptions.filter((o: any) => o.field === "creativeType" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
   const angleOpts = fieldOptions.filter((o: any) => o.field === "angle" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
+  const productOpts = fieldOptions.filter((o: any) => o.field === "product" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
   const dimsOpts = [{ value: "9:16", label: "9:16" }, { value: "4:5", label: "4:5" }, { value: "1:1", label: "1:1" }, { value: "16:9", label: "16:9" }];
+  const copySlugOpts = (copyEntries as any[]).filter((c: any) => c.status === "active").map((c: any) => ({ value: c.copySlug, label: c.copySlug }));
 
   const optionsMap: Record<string, { value: string; label: string }[]> = {
     source: sourceOpts,
@@ -162,6 +166,8 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
     contentType: contentTypeOpts,
     creativeType: creativeTypeOpts,
     dimensions: dimsOpts,
+    product: productOpts,
+    copySlug: copySlugOpts,
   };
 
   const [rows, setRows] = useState<ParsedRow[]>([]);

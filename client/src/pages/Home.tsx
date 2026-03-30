@@ -142,6 +142,8 @@ function exportCSV(items: QueueItem[]) {
     "Ad Name", "Brand", "Initiative", "Variation", "Angle", "Source",
     "Product", "Format", "Type", "Dimensions", "Copy", "Filename",
     "Date", "Status", "Handle", "File URL",
+    "Ad Set ID", "Ad Set Name", "Destination URL", "Display URL", "CTA",
+    "Headline", "Body Copy",
   ];
   const escape = (v: string | null | undefined) => {
     const s = (v ?? "").toString().replace(/"/g, '""');
@@ -151,6 +153,8 @@ function exportCSV(items: QueueItem[]) {
     i.generatedAdName, i.brand, i.initiative, i.variation, i.angle, i.source,
     i.product, i.contentType, i.creativeType, i.dimensions, i.copySlug, i.filename,
     i.date, i.status, i.handle ?? "", i.fileUrl ?? "",
+    i.adSetId ?? "", i.adSetName ?? "", i.destinationUrl ?? "", i.displayUrl ?? "", i.cta ?? "",
+    i.headline ?? "", i.bodyCopy ?? "",
   ].map(escape).join(","));
   const csv = [headers.map(escape).join(","), ...rows].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -454,6 +458,11 @@ function ConceptCard({
             ))}
           </div>
           <p className="text-[10px] uppercase font-semibold mt-2" style={{ letterSpacing: "0.08em", color: "var(--text-muted)" }}>Meta Upload</p>
+          {!shared.adSetId && (
+            <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm mb-1.5" style={{ background: "rgba(217,119,6,0.08)", border: "1px solid rgba(217,119,6,0.2)" }}>
+              <span style={{ fontSize: "10px", color: "#d97706" }}>&#9888; Ad Set ID is required for Meta upload</span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
             {[
               { label: "Ad Set ID", el: <InlineText value={shared.adSetId || ""} onSave={(v) => onUpdateField("adSetId", v)} disabled={isGroupLocked} mono placeholder="120..." /> },
@@ -784,6 +793,15 @@ export default function Home() {
     for (const row of group.rows) {
       await updateMut.mutateAsync({ id: row.id, [field]: value });
     }
+    // Auto-resolve headline and bodyCopy when copySlug changes
+    if (field === "copySlug" && value) {
+      const entry = copyEntries.find((c: any) => c.copySlug === value);
+      if (entry) {
+        for (const row of group.rows) {
+          await updateMut.mutateAsync({ id: row.id, headline: (entry as any).headline || "", bodyCopy: (entry as any).bodyCopy || "" });
+        }
+      }
+    }
   };
 
   // Feature 5: Apply batch defaults to all drafts
@@ -808,7 +826,7 @@ export default function Home() {
     setBatchEditValue("");
   }
 
-  const COL_COUNT = 17;
+  const COL_COUNT = 20;
 
   // Get select options for currently-selected batch edit field
   const batchEditFieldMeta = BATCH_EDITABLE_FIELDS.find((f) => f.key === batchEditField);
@@ -1341,10 +1359,10 @@ export default function Home() {
                   <th className="px-1 py-2 w-6"></th>
                   {/* Feature 8: thumbnail column */}
                   <th className="px-2 py-2 w-12" style={{ fontSize: "10px", letterSpacing: "0.08em", color: "var(--text-muted)" }}></th>
-                  {(["Status", "Concept Name", "Brand", "Initiative", "Var.", "Angle", "Source", "Product", "Format", "Type", "Copy", "Filename", "Date", "Sizes", "Handle", "Actions"] as const).map((label) => (
+                  {(["Status", "Concept Name", "Brand", "Initiative", "Var.", "Angle", "Source", "Product", "Format", "Type", "Copy", "Filename", "Date", "Sizes", "Ad Set", "Dest URL", "CTA", "Handle", "Actions"] as const).map((label) => (
                     <th
                       key={label}
-                      className={`px-3 py-2 text-left whitespace-nowrap uppercase font-semibold${label === "Concept Name" ? " min-w-[220px]" : label === "Initiative" ? " min-w-[120px]" : label === "Angle" ? " min-w-[110px]" : label === "Type" ? " min-w-[90px]" : label === "Filename" ? " min-w-[100px]" : label === "Sizes" ? " min-w-[100px]" : ""}`}
+                      className={`px-3 py-2 text-left whitespace-nowrap uppercase font-semibold${label === "Concept Name" ? " min-w-[220px]" : label === "Initiative" ? " min-w-[120px]" : label === "Angle" ? " min-w-[110px]" : label === "Type" ? " min-w-[90px]" : label === "Filename" ? " min-w-[100px]" : label === "Sizes" ? " min-w-[100px]" : label === "Ad Set" ? " min-w-[110px]" : label === "Dest URL" ? " min-w-[120px]" : ""}`}
                       style={{ fontSize: "10px", letterSpacing: "0.08em", color: "var(--text-muted)" }}
                     >
                       {label}
@@ -1550,6 +1568,12 @@ export default function Home() {
                             ))}
                           </div>
                         </td>
+                        {/* Ad Set */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.adSetName || ""} onSave={(v) => updateConceptField(key, "adSetName", v)} disabled={isGroupLocked} placeholder="Ad set" /></td>
+                        {/* Dest URL */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
+                        {/* CTA */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.cta || ""} onSave={(v) => updateConceptField(key, "cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /></td>
                         {/* Handle */}
                         <td className="px-3 py-1.5 whitespace-nowrap">
                           <InlineText value={shared.handle || ""} onSave={(v) => updateConceptField(key, "handle", v)} disabled={isGroupLocked} placeholder="@creator" />
