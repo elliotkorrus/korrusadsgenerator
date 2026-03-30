@@ -526,6 +526,13 @@ const FIELD_GROUPS = [
   { field: "contentType", label: "Format", description: "File type of the creative asset" },
 ];
 
+const UPLOAD_DEFAULTS_GROUPS = [
+  { field: "adSet", label: "Ad Sets", description: "Meta ad sets to target — ID and name" },
+  { field: "destinationUrl", label: "Destination URLs", description: "Landing page URLs for ads" },
+  { field: "igHandle", label: "Instagram Handles", description: "IG accounts to run ads through" },
+  { field: "metaAccount", label: "Meta Accounts", description: "Ad account identifiers" },
+];
+
 function OptionsTab() {
   const utils = trpc.useUtils();
   const { data: options = [] } = trpc.fieldOptions.list.useQuery();
@@ -547,8 +554,64 @@ function OptionsTab() {
   return (
     <div>
       <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>Dropdown values for the Upload Queue — changes take effect immediately</p>
+
+      {/* Naming Fields */}
+      <h4 className="text-[10px] uppercase font-semibold mb-2" style={{ letterSpacing: "0.08em", color: "var(--text-muted)" }}>Naming Fields</h4>
       <div className="space-y-3">
         {FIELD_GROUPS.map((group) => {
+          const fieldOpts = options.filter((o) => o.field === group.field);
+          return (
+            <div key={group.field} className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--surface-3)" }}>
+              <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "var(--surface-1)", borderBottom: fieldOpts.length > 0 ? "1px solid var(--surface-3)" : "none" }}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{group.label}</span>
+                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{group.description}</span>
+                </div>
+                <button onClick={() => openCreate(group.field)} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-sm transition-colors"
+                  style={{ color: "#60A7C8", background: "rgba(0,153,198,0.08)", border: "1px solid rgba(0,153,198,0.15)" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(0,153,198,0.15)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(0,153,198,0.08)"; }}>
+                  <Plus className="w-3 h-3" /> Add
+                </button>
+              </div>
+              {fieldOpts.map((opt, i) => (
+                <div key={opt.id} className="flex items-center justify-between px-4 py-2"
+                  style={{ borderTop: i > 0 ? "1px solid var(--surface-2)" : "none", background: "var(--surface-0)" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(0,153,198,0.02)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-0)"; }}>
+                  <div className="flex items-center gap-3">
+                    <code className="text-[11px]" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#60A7C8" }}>{opt.value}</code>
+                    {opt.label && <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{opt.label}</span>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => toggleMut.mutate({ id: opt.id, isActive: !opt.isActive })} className="px-1.5 py-0.5 text-[10px] font-medium rounded-sm border transition-colors"
+                      style={opt.isActive ? { background: "rgba(74,222,128,0.08)", color: "#4ade80", borderColor: "rgba(74,222,128,0.2)" } : { background: "var(--surface-2)", color: "var(--text-muted)", borderColor: "var(--surface-3)" }}>
+                      {opt.isActive ? "Active" : "Inactive"}
+                    </button>
+                    <button onClick={() => openEdit(opt)} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)"; (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => deleteMut.mutate({ id: opt.id })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {fieldOpts.length === 0 && <div className="px-4 py-3 text-[11px]" style={{ color: "var(--text-muted)", background: "var(--surface-0)" }}>No options yet.</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Upload Defaults */}
+      <h4 className="text-[10px] uppercase font-semibold mb-2 mt-6" style={{ letterSpacing: "0.08em", color: "var(--text-muted)" }}>Upload Defaults</h4>
+      <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>Saved values for Meta upload fields — select from these when setting up ads</p>
+      <div className="space-y-3">
+        {UPLOAD_DEFAULTS_GROUPS.map((group) => {
           const fieldOpts = options.filter((o) => o.field === group.field);
           return (
             <div key={group.field} className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--surface-3)" }}>
