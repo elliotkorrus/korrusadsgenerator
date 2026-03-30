@@ -15,7 +15,8 @@ interface DashboardMetricsProps {
   }>;
 }
 
-const REQUIRED_DIMENSIONS = ["9:16", "4:5", "1:1", "16:9"];
+const STORY_DIMS = ["9:16"];
+const FEED_DIMS = ["4:5", "1:1", "16:9"];
 
 const AGENCY_PALETTE = [
   "#60A7C8",
@@ -105,18 +106,29 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
     const agencySorted = Object.entries(agencyCounts).sort((a, b) => b[1] - a[1]);
     const maxAgencyCount = agencySorted.length > 0 ? agencySorted[0][1] : 0;
 
-    // Missing sizes
+    // Missing sizes — a concept is complete when it has at least one Story (9:16)
+    // AND at least one Feed (4:5, 1:1, or 16:9) dimension.
     const conceptGroups: Record<string, Set<string>> = {};
     for (const item of items) {
       const key = item.conceptKey || `__solo_${item.id}`;
       if (!conceptGroups[key]) conceptGroups[key] = new Set();
       conceptGroups[key].add(item.dimensions);
     }
-    let missingSizes = 0;
+    let missingStory = 0;
+    let missingFeed = 0;
     for (const dims of Object.values(conceptGroups)) {
-      const hasAll = REQUIRED_DIMENSIONS.every((d) => dims.has(d));
-      if (!hasAll) missingSizes++;
+      const hasStory = STORY_DIMS.some((d) => dims.has(d));
+      const hasFeed = FEED_DIMS.some((d) => dims.has(d));
+      if (!hasStory) missingStory++;
+      if (!hasFeed) missingFeed++;
     }
+    const incomplete = missingStory + missingFeed > 0
+      ? Object.values(conceptGroups).filter((dims) => {
+          const hasStory = STORY_DIMS.some((d) => dims.has(d));
+          const hasFeed = FEED_DIMS.some((d) => dims.has(d));
+          return !hasStory || !hasFeed;
+        }).length
+      : 0;
 
     return {
       total,
@@ -127,7 +139,9 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
       needsAttention,
       agencySorted,
       maxAgencyCount,
-      missingSizes,
+      incomplete,
+      missingStory,
+      missingFeed,
     };
   }, [items]);
 
@@ -332,17 +346,17 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
           </div>
         </div>
 
-        {/* Missing Sizes */}
+        {/* Incomplete Concepts */}
         <div style={cardStyle}>
-          <div style={labelStyle}>Missing Sizes</div>
+          <div style={labelStyle}>Incomplete</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
             <span
               style={{
                 ...valueStyle,
-                color: metrics.missingSizes > 0 ? "#fb923c" : "var(--text-muted)",
+                color: metrics.incomplete > 0 ? "#fb923c" : "var(--text-muted)",
               }}
             >
-              {metrics.missingSizes}
+              {metrics.incomplete}
             </span>
             <span
               style={{
@@ -351,9 +365,23 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
                 fontWeight: 400,
               }}
             >
-              {metrics.missingSizes === 1 ? "concept" : "concepts"}
+              {metrics.incomplete === 1 ? "concept" : "concepts"}
             </span>
           </div>
+          {metrics.incomplete > 0 && (
+            <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+              {metrics.missingStory > 0 && (
+                <span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 500 }}>
+                  {metrics.missingStory} no story
+                </span>
+              )}
+              {metrics.missingFeed > 0 && (
+                <span style={{ fontSize: 10, color: "#38bdf8", fontWeight: 500 }}>
+                  {metrics.missingFeed} no feed
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -35,9 +35,59 @@ import {
 } from "lucide-react";
 import { X } from "lucide-react";
 
-const STATUS_TABS = ["all", "draft", "ready", "uploading", "uploaded", "error"] as const;
+const FOCUS_VIEWS = [
+  { key: "inbox", label: "Inbox", desc: "New & drafts", statuses: ["draft"] },
+  { key: "queue", label: "Queue", desc: "Ready to upload", statuses: ["ready", "uploading"] },
+  { key: "live", label: "Live", desc: "In Meta", statuses: ["uploaded", "error"] },
+] as const;
+
+const FOCUS_VIEW_EMPTY: Record<string, { icon: string; title: string; message: string }> = {
+  inbox: { icon: "tray", title: "No new creatives", message: "Drag files or import a CSV to get started." },
+  queue: { icon: "send", title: "Nothing queued", message: "Mark drafts as Ready in the Inbox to move them here." },
+  live: { icon: "globe", title: "No ads uploaded yet", message: "Send ready creatives from the Queue." },
+};
 
 const ALL_DIMS = ["9:16", "4:5", "1:1", "16:9"] as const;
+const STORY_DIMS = new Set(["9:16"]);
+const FEED_DIMS = new Set(["4:5", "1:1", "16:9"]);
+
+/** Label hint for a dimension in Add Size dropdowns. */
+function dimTypeHint(dim: string): string {
+  if (STORY_DIMS.has(dim)) return "(story)";
+  if (FEED_DIMS.has(dim)) return "(feed)";
+  return "";
+}
+
+/** Sort available dims so the most-needed type comes first. */
+function sortAvailableDims(existing: Set<string>): string[] {
+  const hasStory = [...existing].some((d) => STORY_DIMS.has(d));
+  const hasFeed = [...existing].some((d) => FEED_DIMS.has(d));
+  const available = ALL_DIMS.filter((d) => !existing.has(d));
+
+  // If missing story, put story dims first; if missing feed, put feed dims first
+  if (!hasStory && hasFeed) {
+    return available.sort((a, b) => {
+      const aStory = STORY_DIMS.has(a) ? 0 : 1;
+      const bStory = STORY_DIMS.has(b) ? 0 : 1;
+      return aStory - bStory;
+    });
+  }
+  if (!hasFeed && hasStory) {
+    return available.sort((a, b) => {
+      const aFeed = FEED_DIMS.has(a) ? 0 : 1;
+      const bFeed = FEED_DIMS.has(b) ? 0 : 1;
+      return aFeed - bFeed;
+    });
+  }
+  return available;
+}
+
+/** Check concept completeness: needs at least one story AND one feed size. */
+function conceptMissing(existingDims: Set<string>): { missingStory: boolean; missingFeed: boolean } {
+  const hasStory = [...existingDims].some((d) => STORY_DIMS.has(d));
+  const hasFeed = [...existingDims].some((d) => FEED_DIMS.has(d));
+  return { missingStory: !hasStory, missingFeed: !hasFeed };
+}
 
 const BATCH_EDITABLE_FIELDS = [
   { key: "initiative", label: "Initiative" },
@@ -370,7 +420,7 @@ function ConceptCard({
       </div>
 
       {/* Size badges */}
-      <div className="px-3 pb-2 flex flex-wrap gap-1">
+      <div className="px-3 pb-2 flex flex-wrap gap-1 items-center">
         {rows.map((r) => (
           <span key={r.id} className={dimBadgeClass(r.dimensions, r.status)}>
             {r.dimensions}
@@ -379,6 +429,16 @@ function ConceptCard({
             {r.status === "ready" && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />}
           </span>
         ))}
+        {(() => {
+          const dims = new Set(rows.map((r) => r.dimensions));
+          const { missingStory, missingFeed } = conceptMissing(dims);
+          if (!missingStory && !missingFeed) return null;
+          return (
+            <span className="text-[9px] font-medium ml-0.5" style={{ color: "#fb923c" }} title={`Missing: ${missingStory ? "story" : ""}${missingStory && missingFeed ? " + " : ""}${missingFeed ? "feed" : ""}`}>
+              {missingStory && missingFeed ? "!S+F" : missingStory ? "!story" : "!feed"}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Actions row */}
@@ -418,6 +478,7 @@ function ConceptCard({
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = ""; }}
                   >
                     <span className={dimBadgeClass(dim)}>{dim}</span>
+                    <span className="ml-1 text-[9px] opacity-50">{dimTypeHint(dim)}</span>
                   </button>
                 ))}
               </div>
@@ -492,7 +553,7 @@ function ConceptCard({
 // ── Main Home component ───────────────────────────────────────────
 export default function Home() {
   const utils = trpc.useUtils();
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [focusView, setFocusView] = useState<string>("inbox");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -549,26 +610,34 @@ export default function Home() {
   const [sendingIds, setSendingIds] = useState<Set<number>>(new Set());
   const [stubPayloads, setStubPayloads] = useState<Record<number, any>>({});
 
-  // Always fetch all items for accurate group counts; filter client-side for the active tab
+  // Always fetch all items for accurate group counts; filter client-side for the active view
   const { data: rawAllItems = [] } = trpc.queue.list.useQuery({});
   const allItems = rawAllItems as QueueItem[];
+  const activeFocusView = FOCUS_VIEWS.find((v) => v.key === focusView) || FOCUS_VIEWS[0];
   const items = useMemo(
-    () => statusFilter === "all" ? allItems : allItems.filter((i) => i.status === statusFilter),
-    [allItems, statusFilter]
+    () => allItems.filter((i) => (activeFocusView.statuses as readonly string[]).includes(i.status)),
+    [allItems, activeFocusView]
   );
 
-  // Concept group counts per status (shown in tabs)
-  const counts = useMemo(() => {
+  // Concept group counts per focus view (shown in tabs)
+  const viewCounts = useMemo(() => {
     const groupMap = new Map<string, string[]>();
     for (const item of allItems) {
       const key = item.conceptKey || item.id.toString();
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(item.status);
     }
-    const result: Record<string, number> = { all: groupMap.size };
+    const result: Record<string, number> = {};
+    for (const view of FOCUS_VIEWS) {
+      result[view.key] = 0;
+    }
     for (const statuses of groupMap.values()) {
       const gs = groupStatus(statuses);
-      result[gs] = (result[gs] || 0) + 1;
+      for (const view of FOCUS_VIEWS) {
+        if ((view.statuses as readonly string[]).includes(gs)) {
+          result[view.key] = (result[view.key] || 0) + 1;
+        }
+      }
     }
     return result;
   }, [allItems]);
@@ -929,10 +998,10 @@ export default function Home() {
             className="font-semibold leading-none"
             style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "15px", letterSpacing: "-0.01em", color: "var(--text-primary)" }}
           >
-            Upload Queue
+            {activeFocusView.label}
           </h2>
           <p className="mt-0.5" style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-            Drag &amp; drop files anywhere, or use Add Ad
+            {activeFocusView.desc}
           </p>
         </div>
         <div className="flex items-center gap-2 ml-auto">
@@ -1141,33 +1210,50 @@ export default function Home() {
       {/* Dashboard Metrics */}
       <DashboardMetrics items={allItems as any} />
 
-      {/* Status filter tabs */}
+      {/* Focus view tabs */}
       <div
-        className="flex-shrink-0 flex items-center gap-0.5 px-5 py-2 overflow-x-auto"
+        className="flex-shrink-0 flex items-center gap-1 px-5 py-2.5 overflow-x-auto"
         style={{ borderBottom: "1px solid var(--surface-3)", background: "var(--surface-0)" }}
       >
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setStatusFilter(tab)}
-            className="flex-shrink-0 px-2.5 py-1 text-[11px] font-medium rounded-sm transition-colors whitespace-nowrap"
-            style={
-              statusFilter === tab
-                ? { background: "var(--surface-2)", color: "var(--text-primary)", border: "1px solid var(--surface-3)" }
-                : { color: "var(--text-muted)", border: "1px solid transparent" }
-            }
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            {(counts as any)[tab] !== undefined && (
+        {FOCUS_VIEWS.map((view) => {
+          const isActive = focusView === view.key;
+          const count = viewCounts[view.key] || 0;
+          const accentMap: Record<string, { bg: string; border: string; text: string; countBg: string; countText: string }> = {
+            inbox: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.35)", text: "#f59e0b", countBg: "rgba(245,158,11,0.15)", countText: "#fbbf24" },
+            queue: { bg: "rgba(59,130,246,0.08)", border: "rgba(59,130,246,0.35)", text: "#3b82f6", countBg: "rgba(59,130,246,0.15)", countText: "#60a5fa" },
+            live: { bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.35)", text: "#10b981", countBg: "rgba(16,185,129,0.15)", countText: "#34d399" },
+          };
+          const accent = accentMap[view.key] || accentMap.inbox;
+          return (
+            <button
+              key={view.key}
+              onClick={() => setFocusView(view.key)}
+              className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium rounded-md transition-all whitespace-nowrap"
+              style={
+                isActive
+                  ? { background: accent.bg, color: accent.text, border: `1px solid ${accent.border}` }
+                  : { color: "var(--text-muted)", border: "1px solid transparent" }
+              }
+            >
+              <span className="font-semibold">{view.label}</span>
               <span
-                className="ml-1.5 px-1.5 py-px font-mono"
-                style={{ fontSize: "9px", background: "var(--surface-3)", color: "var(--text-secondary)", borderRadius: "3px" }}
+                className="px-1.5 py-px font-mono rounded-sm"
+                style={{
+                  fontSize: "9px",
+                  background: isActive ? accent.countBg : "var(--surface-3)",
+                  color: isActive ? accent.countText : "var(--text-secondary)",
+                }}
               >
-                {(counts as any)[tab]}
+                {count}
               </span>
-            )}
-          </button>
-        ))}
+              {isActive && (
+                <span className="text-[10px] font-normal" style={{ color: "var(--text-muted)" }}>
+                  {view.desc}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Feature 4: Search bar */}
@@ -1323,49 +1409,52 @@ export default function Home() {
 
       {/* Content area */}
       <div className="flex-1 overflow-auto">
-        {/* Feature 10: Empty state */}
-        {filteredGrouped.length === 0 && (
-          <div
-            className="flex flex-col items-center justify-center py-24 px-8 text-center"
-            style={{ minHeight: "320px" }}
-          >
-            <CloudUpload
-              className="mb-5"
-              style={{ width: "48px", height: "48px", color: "var(--text-muted)", strokeWidth: 1.5 }}
-            />
-            <h3
-              className="font-semibold mb-2"
-              style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "16px", color: "var(--text-secondary)", letterSpacing: "-0.01em" }}
+        {/* Contextual empty state per focus view */}
+        {filteredGrouped.length === 0 && (() => {
+          const emptyInfo = FOCUS_VIEW_EMPTY[focusView] || FOCUS_VIEW_EMPTY.inbox;
+          return (
+            <div
+              className="flex flex-col items-center justify-center py-24 px-8 text-center"
+              style={{ minHeight: "320px" }}
             >
-              {searchText ? "No results found" : "Drop your files here to get started"}
-            </h3>
-            <p
-              className="mb-6 max-w-md"
-              style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: "1.6" }}
-            >
-              {searchText
-                ? `No concepts match "${searchText}". Try a different search term.`
-                : "Drag images or videos anywhere on this page — the app will read your filenames and fill in the fields automatically."}
-            </p>
-            {!searchText && (
-              <button
-                onClick={() => setShowAddDialog(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,153,198,0.5)";
-                  (e.currentTarget as HTMLButtonElement).style.color = "#60A7C8";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--surface-3)";
-                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
-                }}
+              <CloudUpload
+                className="mb-5"
+                style={{ width: "48px", height: "48px", color: "var(--text-muted)", strokeWidth: 1.5 }}
+              />
+              <h3
+                className="font-semibold mb-2"
+                style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "16px", color: "var(--text-secondary)", letterSpacing: "-0.01em" }}
               >
-                <Plus className="w-4 h-4" /> Add Ad manually
-              </button>
-            )}
-          </div>
-        )}
+                {searchText ? "No results found" : emptyInfo.title}
+              </h3>
+              <p
+                className="mb-6 max-w-md"
+                style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: "1.6" }}
+              >
+                {searchText
+                  ? `No concepts match "${searchText}". Try a different search term.`
+                  : emptyInfo.message}
+              </p>
+              {!searchText && focusView === "inbox" && (
+                <button
+                  onClick={() => setShowAddDialog(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,153,198,0.5)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "#60A7C8";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--surface-3)";
+                    (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                  }}
+                >
+                  <Plus className="w-4 h-4" /> Add Ad manually
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Feature 2: Card view */}
         {viewMode === "card" && filteredGrouped.length > 0 && (
@@ -1378,7 +1467,7 @@ export default function Home() {
                 const hasErrors = rowErrors.length > 0;
                 const isGroupLocked = rows.every((r) => isLocked(r.status));
                 const existingDims = new Set(rows.map((r) => r.dimensions));
-                const availableDims = ALL_DIMS.filter((d) => !existingDims.has(d));
+                const availableDims = sortAvailableDims(existingDims);
 
                 return (
                   <ConceptCard
@@ -1462,7 +1551,7 @@ export default function Home() {
                   const hasErrors = rowErrors.length > 0;
                   const isGroupLocked = rows.every((r) => isLocked(r.status));
                   const existingDims = new Set(rows.map((r) => r.dimensions));
-                  const availableDims = ALL_DIMS.filter((d) => !existingDims.has(d));
+                  const availableDims = sortAvailableDims(existingDims);
 
                   // Concept name: ad name without dimensions segment
                   const conceptLabel = shared.generatedAdName
@@ -1640,7 +1729,7 @@ export default function Home() {
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.date || ""} onSave={(v) => updateConceptField(key, "date", v)} disabled={isGroupLocked} mono placeholder="2026-03" /></td>
                         {/* Sizes badges */}
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1 items-center">
                             {rows.map((r) => (
                               <span key={r.id} className={dimBadgeClass(r.dimensions, r.status)}>
                                 {r.dimensions}
@@ -1649,6 +1738,15 @@ export default function Home() {
                                 {r.status === "ready" && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />}
                               </span>
                             ))}
+                            {(() => {
+                              const { missingStory, missingFeed } = conceptMissing(existingDims);
+                              if (!missingStory && !missingFeed) return null;
+                              return (
+                                <span className="text-[9px] font-medium ml-0.5" style={{ color: "#fb923c" }} title={`Missing: ${missingStory ? "story" : ""}${missingStory && missingFeed ? " + " : ""}${missingFeed ? "feed" : ""}`}>
+                                  {missingStory && missingFeed ? "!S+F" : missingStory ? "!story" : "!feed"}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </td>
                         {/* Ad Set */}
@@ -1711,6 +1809,7 @@ export default function Home() {
                                         onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = ""; }}
                                       >
                                         <span className={dimBadgeClass(dim)}>{dim}</span>
+                                        <span className="ml-1 text-[9px] opacity-50">{dimTypeHint(dim)}</span>
                                       </button>
                                     ))}
                                   </div>
@@ -1917,6 +2016,7 @@ export default function Home() {
                                           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = ""; }}
                                         >
                                           <span className={dimBadgeClass(dim)}>{dim}</span>
+                                          <span className="ml-1 text-[9px] opacity-50">{dimTypeHint(dim)}</span>
                                         </button>
                                       ))}
                                     </div>

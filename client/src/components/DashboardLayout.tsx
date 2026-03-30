@@ -1,6 +1,8 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, Link, useLocation } from "react-router-dom";
 import {
-  Upload,
+  Inbox,
+  Send,
+  Globe,
   History,
   BookOpen,
   Settings,
@@ -8,8 +10,13 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-const NAV_ITEMS = [
-  { icon: Upload, label: "Upload Queue", path: "/" },
+const FOCUS_VIEWS = [
+  { icon: Inbox, label: "Inbox", key: "inbox", accent: "#f59e0b" },
+  { icon: Send, label: "Queue", key: "queue", accent: "#3b82f6" },
+  { icon: Globe, label: "Live", key: "live", accent: "#10b981" },
+];
+
+const OTHER_NAV = [
   { icon: History, label: "Upload History", path: "/history" },
   { icon: BookOpen, label: "Naming & Config", path: "/naming-config" },
   { icon: Settings, label: "Meta Settings", path: "/settings" },
@@ -19,7 +26,6 @@ function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: 
   return (
     <NavLink
       to={path}
-      end={path === "/"}
       className={({ isActive }) =>
         `flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
           isActive ? "border-l-2 border-[#0099C6] pl-[9px]" : "border-l-2 border-transparent"
@@ -42,6 +48,9 @@ function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: 
 }
 
 export default function DashboardLayout({ children, onSignOut }: { children: ReactNode; onSignOut?: () => void }) {
+  const location = useLocation();
+  const isHome = location.pathname === "/";
+
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--surface-0)", color: "var(--text-primary)" }}>
       {/* Sidebar */}
@@ -66,10 +75,43 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-3 px-2 overflow-y-auto space-y-px">
-          {NAV_ITEMS.map((item) => (
-            <NavItem key={item.path} {...item} />
-          ))}
+        <nav className="flex-1 py-3 px-2 overflow-y-auto">
+          {/* Focus view section */}
+          <p
+            className="px-2.5 pt-1 pb-2 text-[9px] font-semibold uppercase"
+            style={{ letterSpacing: "0.1em", color: "var(--text-muted)" }}
+          >
+            Upload Queue
+          </p>
+          <div className="space-y-px mb-3">
+            {FOCUS_VIEWS.map((view) => (
+              <Link
+                key={view.key}
+                to="/"
+                className={`flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
+                  isHome ? "border-l-2 pl-[9px]" : "border-l-2 border-transparent"
+                }`}
+                style={
+                  isHome
+                    ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)" }
+                    : { color: "var(--text-secondary)" }
+                }
+              >
+                <view.icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: isHome ? view.accent : undefined }} />
+                {view.label}
+              </Link>
+            ))}
+          </div>
+
+          {/* Divider */}
+          <div className="mx-2.5 mb-3" style={{ borderTop: "1px solid var(--surface-3)" }} />
+
+          {/* Other nav items */}
+          <div className="space-y-px">
+            {OTHER_NAV.map((item) => (
+              <NavItem key={item.path} {...item} />
+            ))}
+          </div>
         </nav>
 
         {/* Footer */}

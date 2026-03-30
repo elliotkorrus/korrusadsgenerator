@@ -129,6 +129,9 @@ const DIMENSION_STYLES: Record<string, { label: string; bg: string; text: string
   "16:9": { label: "16:9", bg: "rgba(251,191,36,0.15)", text: "#fbbf24" },
 };
 
+const STORY_DIMS = new Set(["9:16"]);
+const FEED_DIMS = new Set(["4:5", "1:1", "16:9"]);
+
 const STATUS_DOT_COLORS: Record<Status, string> = {
   draft: "#484f58",
   ready: "#58a6ff",
@@ -412,14 +415,27 @@ function PipelineCard({
             ))}
           </div>
 
-          {/* File count */}
+          {/* File count + completeness */}
           <div
             style={{
               fontSize: 10,
               color: "var(--text-muted)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}
           >
-            {sizeCount} {sizeCount === 1 ? "size" : "sizes"}
+            <span>{sizeCount} {sizeCount === 1 ? "size" : "sizes"}</span>
+            {(() => {
+              const aspects = new Set(dimensionEntries.map((d) => d.aspect));
+              const hasStory = [...aspects].some((a) => STORY_DIMS.has(a));
+              const hasFeed = [...aspects].some((a) => FEED_DIMS.has(a));
+              if (hasStory && hasFeed) return null;
+              const label = !hasStory && !hasFeed ? "!story+feed" : !hasStory ? "!story" : "!feed";
+              return (
+                <span style={{ color: "#fb923c", fontWeight: 500 }}>{label}</span>
+              );
+            })()}
           </div>
 
           {/* Meta Ad ID for uploaded */}
