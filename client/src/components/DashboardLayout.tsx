@@ -4,6 +4,7 @@ import {
   History,
   BookOpen,
   Settings,
+  LogOut,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -40,7 +41,7 @@ function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: 
   );
 }
 
-export default function DashboardLayout({ children }: { children: ReactNode }) {
+export default function DashboardLayout({ children, onSignOut }: { children: ReactNode; onSignOut?: () => void }) {
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--surface-0)", color: "var(--text-primary)" }}>
       {/* Sidebar */}
@@ -72,11 +73,22 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </nav>
 
         {/* Footer */}
-        <div className="px-4 py-3" style={{ borderTop: "1px solid var(--surface-3)" }}>
+        <div className="px-3 py-3 space-y-2" style={{ borderTop: "1px solid var(--surface-3)" }}>
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#3fb950", boxShadow: "0 0 4px #3fb950aa" }} />
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Live · v1.0</span>
           </div>
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              className="flex items-center gap-2 w-full px-2 py-1.5 rounded-sm text-[11px] transition-colors"
+              style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.06)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >
+              <LogOut className="w-3 h-3" /> Sign out
+            </button>
+          )}
         </div>
       </aside>
 

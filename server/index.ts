@@ -17,6 +17,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ── Simple password auth ─────────────────────────────────────────────────────
+// Set APP_PASSWORD env var to enable. Skipped in development if unset.
+const APP_PASSWORD = process.env.APP_PASSWORD;
+function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!APP_PASSWORD) return next(); // no password set → open (dev mode)
+  const auth = req.headers["x-app-token"];
+  if (auth === APP_PASSWORD) return next();
+  res.status(401).json({ error: "Unauthorized" });
+}
+app.use("/api", authMiddleware);
+
 // Serve uploaded files
 app.use("/uploads", express.static(uploadsDir));
 

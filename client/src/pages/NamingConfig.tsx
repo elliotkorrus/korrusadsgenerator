@@ -51,7 +51,7 @@ const FIELDS = [
   { position: 8, key: "creativeType", label: "Type", example: "ESTATIC", color: "#4ade80", description: "Creative execution style.", rules: ["ESTATIC = elevated static  ·  UGC = creator style", "MEME  ·  GFX = motion  ·  MASHUP  ·  TESTI  ·  AI"], options: ["ESTATIC", "UGC", "MEME", "GFX", "MASHUP", "TESTI", "AI"], fixed: false },
   { position: 9, key: "dimensions", label: "Dims", example: "1x1", color: "#94a3b8", description: "Ad placement size. Auto-detected from pixel dimensions on drop.", rules: ["9x16 = Stories/Reels  ·  1x1 = square Feed", "4x5 = portrait Feed  ·  16x9 = landscape", "Colon → x in name (9:16 → 9x16)"], options: ["9x16", "1x1", "4x5", "16x9"], fixed: false },
   { position: 10, key: "copySlug", label: "Copy", example: "RQA-SleepStruggles", color: "#f472b6", description: "Specific ad copy variant. Links to a Copy Library entry.", rules: ["Must match a copy_slug in Copy Library", "Format: ANGLE-Descriptor (hyphens, no spaces)", "Required before marking an ad Ready"], options: ["RQA-SleepStruggles", "RQA-ReliableSetup", "RQA-CircadianDisorder"], fixed: false },
-  { position: 11, key: "filename", label: "Filename", example: "korrus_s_004_1_RedditQ&A_ng_2026-03", color: "#a3a3a3", description: "Source filename minus extension and size token. Auto-parsed on drop.", rules: ["Stripped of extension and dimension token", "Preserves original filename for traceability"], options: [], fixed: false },
+  { position: 11, key: "filename", label: "Filename", example: "korrus_s_004_1_RedditQ&A_ng_2026-03", color: "#a3a3a3", description: "Source filename — stored for traceability but excluded from the ad name.", rules: ["Not included in the generated ad name", "Stored in the DB so you can trace back to the original agency file", "Auto-parsed on drop — no manual entry needed"], options: [], fixed: true },
   { position: 12, key: "date", label: "Date", example: "2026-03", color: "#71717a", description: "Month the creative was produced (YYYY-MM).", rules: ["YYYY-MM — no day", "Auto-parsed from filename  ·  defaults to current month"], options: [], fixed: false },
 ];
 
@@ -77,7 +77,30 @@ function CopyBtn({ text }: { text: string }) {
 function GuideTab() {
   const [active, setActive] = useState<string | null>(null);
   const [values, setValues] = useState(DEFAULT_VALUES);
-  const adName = FIELDS.map((f) => values[f.key] ?? "").join("__");
+
+  // Pull live data from the same sources as the other tabs
+  const { data: angles = [] } = trpc.angles.list.useQuery({});
+  const { data: copyEntries = [] } = trpc.copy.list.useQuery({});
+  const { data: fieldOpts = [] } = trpc.fieldOptions.list.useQuery();
+
+  // Build dynamic options per field — falls back to the static list if DB is empty
+  const dynamicOptions: Record<string, string[]> = {
+    angle: angles.filter((a) => a.status === "active").map((a) => a.angleSlug),
+    copySlug: copyEntries.filter((c) => c.status === "active").map((c) => c.copySlug),
+    source: fieldOpts.filter((o) => o.field === "source" && o.isActive).map((o) => o.value),
+    product: fieldOpts.filter((o) => o.field === "product" && o.isActive).map((o) => o.value),
+    contentType: fieldOpts.filter((o) => o.field === "contentType" && o.isActive).map((o) => o.value),
+    creativeType: fieldOpts.filter((o) => o.field === "creativeType" && o.isActive).map((o) => o.value),
+  };
+
+  // Use live options if populated, otherwise fall back to static
+  function getOptions(f: typeof FIELDS[number]): string[] {
+    const live = dynamicOptions[f.key];
+    return live && live.length > 0 ? live : f.options;
+  }
+
+  // Ad name preview — exclude filename, skip empty fields (matches generateAdName behaviour)
+  const adName = FIELDS.filter((f) => f.key !== "filename").map((f) => values[f.key] ?? "").filter(Boolean).join("__");
 
   return (
     <div className="space-y-5">
@@ -113,53 +136,55 @@ function GuideTab() {
       {/* Rule */}
       <div className="rounded-md px-4 py-3 text-[11px]" style={{ background: "rgba(0,153,198,0.05)", border: "1px solid rgba(0,153,198,0.15)", color: "var(--text-secondary)" }}>
         <span style={{ color: "#60A7C8", fontWeight: 600 }}>Rule: </span>
-        Fields joined with <code style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#60A7C8" }}>__</code>. A blank field creates a gap{" "}
-        <code style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#f87171" }}>____</code> — all fields must be filled before marking an ad{" "}
-        <span style={{ color: "#4ade80" }}>Ready</span>.
+        Fields joined with <code style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#60A7C8" }}>__</code>. Empty fields are skipped —
+        all required fields must be filled before marking an ad <span style={{ color: "#4ade80" }}>Ready</span>.
       </div>
 
       {/* Field cards */}
       <div className="space-y-2">
-        {FIELDS.map((f) => (
-          <div key={f.key} className="rounded-lg overflow-hidden transition-all"
-            style={{ border: `1px solid ${active === f.key ? f.color + "50" : "var(--surface-3)"}`, background: active === f.key ? `${f.color}07` : "var(--surface-1)" }}
-            onMouseEnter={() => setActive(f.key)} onMouseLeave={() => setActive(null)}>
-            <div className="px-4 py-3 flex items-start gap-4">
-              <div className="flex-shrink-0 w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-bold mt-0.5"
-                style={{ background: `${f.color}22`, color: f.color, fontFamily: "'IBM Plex Mono', monospace" }}>{f.position}</div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{f.label}</span>
-                    <code className="text-[11px]" style={{ color: f.color, fontFamily: "'IBM Plex Mono', monospace" }}>{values[f.key] || "—"}</code>
+        {FIELDS.map((f) => {
+          const opts = getOptions(f);
+          return (
+            <div key={f.key} className="rounded-lg overflow-hidden transition-all"
+              style={{ border: `1px solid ${active === f.key ? f.color + "50" : "var(--surface-3)"}`, background: active === f.key ? `${f.color}07` : "var(--surface-1)" }}
+              onMouseEnter={() => setActive(f.key)} onMouseLeave={() => setActive(null)}>
+              <div className="px-4 py-3 flex items-start gap-4">
+                <div className="flex-shrink-0 w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-bold mt-0.5"
+                  style={{ background: `${f.color}22`, color: f.color, fontFamily: "'IBM Plex Mono', monospace" }}>{f.position}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{f.label}</span>
+                      <code className="text-[11px]" style={{ color: f.color, fontFamily: "'IBM Plex Mono', monospace" }}>{values[f.key] || "—"}</code>
+                    </div>
+                    {f.fixed ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: `${f.color}15`, color: f.color }}>always fixed</span>
+                    ) : opts.length > 0 ? (
+                      <select value={values[f.key] || ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
+                        className="text-[11px] px-2 py-1 rounded-sm focus:outline-none"
+                        style={{ background: "var(--surface-2)", border: `1px solid ${f.color}40`, color: f.color, fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer" }}>
+                        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" value={values[f.key] || ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))} placeholder={f.example}
+                        className="text-[11px] px-2 py-1 rounded-sm focus:outline-none"
+                        style={{ background: "var(--surface-2)", border: `1px solid ${f.color}40`, color: f.color, fontFamily: "'IBM Plex Mono', monospace", width: "200px" }} />
+                    )}
                   </div>
-                  {f.fixed ? (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-sm" style={{ background: `${f.color}15`, color: f.color }}>always fixed</span>
-                  ) : f.options.length > 0 ? (
-                    <select value={values[f.key] || ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
-                      className="text-[11px] px-2 py-1 rounded-sm focus:outline-none"
-                      style={{ background: "var(--surface-2)", border: `1px solid ${f.color}40`, color: f.color, fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer" }}>
-                      {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input type="text" value={values[f.key] || ""} onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))} placeholder={f.example}
-                      className="text-[11px] px-2 py-1 rounded-sm focus:outline-none"
-                      style={{ background: "var(--surface-2)", border: `1px solid ${f.color}40`, color: f.color, fontFamily: "'IBM Plex Mono', monospace", width: "200px" }} />
-                  )}
+                  <p className="text-[11px] mb-2" style={{ color: "var(--text-secondary)" }}>{f.description}</p>
+                  <ul className="space-y-0.5">
+                    {f.rules.map((r, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                        <span className="mt-[3px] w-1 h-1 rounded-full flex-shrink-0" style={{ background: f.color, opacity: 0.5 }} />
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <p className="text-[11px] mb-2" style={{ color: "var(--text-secondary)" }}>{f.description}</p>
-                <ul className="space-y-0.5">
-                  {f.rules.map((r, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      <span className="mt-[3px] w-1 h-1 rounded-full flex-shrink-0" style={{ background: f.color, opacity: 0.5 }} />
-                      {r}
-                    </li>
-                  ))}
-                </ul>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="h-4" />
     </div>
@@ -306,6 +331,13 @@ const angleStatusColors: Record<string, string> = {
 function LabelsTab() {
   const utils = trpc.useUtils();
   const { data: items = [] } = trpc.angles.list.useQuery({});
+  const { data: allFieldOpts = [] } = trpc.fieldOptions.list.useQuery();
+  const ctOpts = allFieldOpts.filter((o) => o.field === "creativeType");
+  const createCtMut = trpc.fieldOptions.create.useMutation({ onSuccess: () => utils.fieldOptions.list.invalidate() });
+  const deleteCtMut = trpc.fieldOptions.delete.useMutation({ onSuccess: () => utils.fieldOptions.list.invalidate() });
+  const toggleCtMut = trpc.fieldOptions.update.useMutation({ onSuccess: () => utils.fieldOptions.list.invalidate() });
+  const [ctInput, setCtInput] = useState("");
+
   const createMut = trpc.angles.create.useMutation({ onSuccess: () => { utils.angles.list.invalidate(); setOpen(false); } });
   const updateMut = trpc.angles.update.useMutation({ onSuccess: () => { utils.angles.list.invalidate(); setOpen(false); } });
   const deleteMut = trpc.angles.delete.useMutation({ onSuccess: () => utils.angles.list.invalidate() });
@@ -320,7 +352,7 @@ function LabelsTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Angles and hooks — linked to the Angle field (position 4) in the ad name</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Creative types — linked to the Angle field (position 4) in the ad name</p>
         <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-white text-[11px] font-semibold rounded-md" style={{ background: "#0099C6" }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}>
@@ -363,6 +395,79 @@ function LabelsTab() {
             {items.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center" style={{ color: "var(--text-muted)" }}>No labels yet.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      {/* Creative Types section */}
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>Creative Format</h3>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>Execution format — position 8 in the ad name (e.g. ESTATIC, UGC, MEME)</p>
+          </div>
+        </div>
+        <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--surface-3)" }}>
+          {/* Add row */}
+          <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "var(--surface-1)", borderBottom: "1px solid var(--surface-3)" }}>
+            <input
+              type="text"
+              value={ctInput}
+              onChange={(e) => setCtInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && ctInput.trim()) {
+                  createCtMut.mutate({ field: "creativeType", value: ctInput.trim(), sortOrder: ctOpts.length });
+                  setCtInput("");
+                }
+              }}
+              placeholder="Type slug and press Enter… e.g. MEME"
+              className="flex-1 px-3 py-1.5 text-[11px] rounded-sm focus:outline-none"
+              style={{ background: "var(--surface-0)", border: "1px solid var(--surface-3)", color: "var(--text-primary)", fontFamily: "'IBM Plex Mono', monospace" }}
+              onFocus={(e) => { (e.target as HTMLInputElement).style.borderColor = "rgba(0,153,198,0.5)"; }}
+              onBlur={(e) => { (e.target as HTMLInputElement).style.borderColor = "var(--surface-3)"; }}
+            />
+            <button
+              onClick={() => { if (ctInput.trim()) { createCtMut.mutate({ field: "creativeType", value: ctInput.trim(), sortOrder: ctOpts.length }); setCtInput(""); } }}
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-sm"
+              style={{ color: "#60A7C8", background: "rgba(0,153,198,0.08)", border: "1px solid rgba(0,153,198,0.15)" }}
+            >
+              <Plus className="w-3 h-3" /> Add
+            </button>
+          </div>
+          {/* List */}
+          {ctOpts.length === 0 && (
+            <div className="px-4 py-4 text-[11px]" style={{ color: "var(--text-muted)", background: "var(--surface-0)" }}>No creative types yet.</div>
+          )}
+          {ctOpts.map((opt, i) => (
+            <div
+              key={opt.id}
+              className="flex items-center justify-between px-4 py-2"
+              style={{ borderTop: i > 0 ? "1px solid var(--surface-2)" : "none", background: "var(--surface-0)" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(0,153,198,0.02)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-0)"; }}
+            >
+              <code className="text-[11px]" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#4ade80" }}>{opt.value}</code>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => toggleCtMut.mutate({ id: opt.id, isActive: !opt.isActive })}
+                  className="px-1.5 py-0.5 text-[10px] font-medium rounded-sm border transition-colors"
+                  style={opt.isActive
+                    ? { background: "rgba(74,222,128,0.08)", color: "#4ade80", borderColor: "rgba(74,222,128,0.2)" }
+                    : { background: "var(--surface-2)", color: "var(--text-muted)", borderColor: "var(--surface-3)" }}
+                >
+                  {opt.isActive ? "Active" : "Inactive"}
+                </button>
+                <button
+                  onClick={() => deleteCtMut.mutate({ id: opt.id })}
+                  className="p-1.5 rounded-sm transition-colors"
+                  style={{ color: "var(--text-muted)" }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {open && (
@@ -419,8 +524,6 @@ const FIELD_GROUPS = [
   { field: "source", label: "Source", description: "Traffic source or creative origin" },
   { field: "product", label: "Product", description: "Product line this ad promotes" },
   { field: "contentType", label: "Format", description: "File type of the creative asset" },
-  { field: "creativeType", label: "Creative Type", description: "Execution style of the creative" },
-  { field: "dimensions", label: "Dimensions", description: "Ad placement aspect ratios" },
 ];
 
 function OptionsTab() {

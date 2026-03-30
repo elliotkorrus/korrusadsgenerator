@@ -88,7 +88,7 @@ const uploadQueueRouter = t.router({
       const conceptKey = input.conceptKey || [
         input.brand, input.initiative, input.variation, input.angle,
         input.source, input.product, input.contentType, input.creativeType,
-        input.copySlug, input.filename, input.date
+        input.copySlug, input.date
       ].join('__');
       return db
         .insert(schema.uploadQueue)
@@ -155,11 +155,11 @@ const uploadQueueRouter = t.router({
         date: merged.date,
       });
 
-      // Recompute conceptKey (all naming fields except dimensions)
+      // Recompute conceptKey (all naming fields except dimensions and filename)
       const newConceptKey = [
         merged.brand, merged.initiative, merged.variation, merged.angle,
         merged.source, merged.product, merged.contentType, merged.creativeType,
-        merged.copySlug, merged.filename, merged.date,
+        merged.copySlug, merged.date,
       ].join("__");
 
       return db
@@ -242,6 +242,71 @@ const uploadQueueRouter = t.router({
           .set({ status: input.status, updatedAt: sql`datetime('now')` })
           .where(eq(schema.uploadQueue.id, id))
           .run();
+      }
+      return { success: true };
+    }),
+
+  // Merge secondary concept groups into a primary — keeps each row's own dimensions
+  merge: publicProcedure
+    .input(
+      z.object({
+        primaryConceptKey: z.string(),
+        secondaryConceptKeys: z.array(z.string()),
+      })
+    )
+    .mutation(({ input }) => {
+      // Get the primary row to use as the field template
+      const primary = db
+        .select()
+        .from(schema.uploadQueue)
+        .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey))
+        .get();
+      if (!primary) throw new Error("Primary concept not found");
+
+      for (const sourceKey of input.secondaryConceptKeys) {
+        const sourceRows = db
+          .select()
+          .from(schema.uploadQueue)
+          .where(eq(schema.uploadQueue.conceptKey, sourceKey))
+          .all();
+
+        for (const row of sourceRows) {
+          // Keep the row's own dimensions; inherit everything else from primary
+          const newAdName = generateAdName({
+            brand: primary.brand,
+            initiative: primary.initiative,
+            variation: primary.variation,
+            angle: primary.angle,
+            source: primary.source,
+            product: primary.product,
+            contentType: primary.contentType,
+            creativeType: primary.creativeType,
+            dimensions: row.dimensions,
+            copySlug: primary.copySlug,
+            filename: primary.filename,
+            date: primary.date,
+          });
+
+          db.update(schema.uploadQueue)
+            .set({
+              brand: primary.brand,
+              initiative: primary.initiative,
+              variation: primary.variation,
+              angle: primary.angle,
+              source: primary.source,
+              product: primary.product,
+              contentType: primary.contentType,
+              creativeType: primary.creativeType,
+              copySlug: primary.copySlug,
+              filename: primary.filename,
+              date: primary.date,
+              conceptKey: input.primaryConceptKey,
+              generatedAdName: newAdName,
+              updatedAt: sql`datetime('now')`,
+            })
+            .where(eq(schema.uploadQueue.id, row.id))
+            .run();
+        }
       }
       return { success: true };
     }),

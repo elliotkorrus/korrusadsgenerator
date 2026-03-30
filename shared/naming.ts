@@ -15,7 +15,7 @@ export interface AdNameFields {
   date: string;
 }
 
-/** Build the 12-field ad name separated by double underscores */
+/** Build the 11-field ad name separated by double underscores (filename stored but excluded) */
 export function generateAdName(fields: AdNameFields): string {
   const dims = fields.dimensions.replace(":", "x"); // 9:16 → 9x16
   return [
@@ -29,9 +29,8 @@ export function generateAdName(fields: AdNameFields): string {
     fields.creativeType,
     dims,
     fields.copySlug,
-    fields.filename,
     fields.date,
-  ].join("__");
+  ].filter(Boolean).join("__");
 }
 
 /** Parse a filename or URL to guess ad fields */

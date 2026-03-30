@@ -3,6 +3,7 @@ import { trpc } from "../lib/trpc";
 import { useFieldOptions } from "../hooks/useFieldOptions";
 import { InlineText, InlineSelect } from "../components/InlineEditCell";
 import BatchDropDialog, { ParsedRow } from "../components/BatchDropDialog";
+import MergeDialog from "../components/MergeDialog";
 import {
   generateAdName,
   parseFilenameToFields,
@@ -25,6 +26,7 @@ import {
   Settings2,
   Search,
   Check,
+  GitMerge,
 } from "lucide-react";
 import { X } from "lucide-react";
 
@@ -490,6 +492,18 @@ export default function Home() {
     date: getCurrentYearMonth(),
   });
 
+  // Merge dialog
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
+
+  // Delete confirmation
+  const [pendingDelete, setPendingDelete] = useState<{ ids: number[]; label: string } | null>(null);
+  function confirmDelete(ids: number[], label: string) { setPendingDelete({ ids, label }); }
+  function executeDelete() {
+    if (!pendingDelete) return;
+    bulkDeleteMut.mutate({ ids: pendingDelete.ids });
+    setPendingDelete(null);
+  }
+
   // Feature 6: batch field edit
   const [showBatchFieldEdit, setShowBatchFieldEdit] = useState(false);
   const [batchEditField, setBatchEditField] = useState<string>(BATCH_EDITABLE_FIELDS[0].key);
@@ -546,6 +560,13 @@ export default function Home() {
     onSuccess: () => {
       utils.queue.list.invalidate();
       setSelectedKeys(new Set());
+    },
+  });
+  const mergeMut = trpc.queue.merge.useMutation({
+    onSuccess: () => {
+      utils.queue.list.invalidate();
+      setSelectedKeys(new Set());
+      setShowMergeDialog(false);
     },
   });
   const addSizeMut = trpc.queue.addSize.useMutation({
@@ -858,6 +879,24 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-2 ml-auto">
+          {/* Merge button — appears when 2+ concept groups are selected */}
+          {selectedKeys.size >= 2 && (
+            <button
+              onClick={() => setShowMergeDialog(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 transition-all text-[11px] font-semibold rounded-md"
+              style={{
+                background: "rgba(96,167,200,0.12)",
+                border: "1px solid rgba(96,167,200,0.35)",
+                color: "#60A7C8",
+                cursor: "pointer",
+              }}
+              title={`Merge ${selectedKeys.size} selected concepts into one`}
+            >
+              <GitMerge className="w-3.5 h-3.5" />
+              Merge {selectedKeys.size}
+            </button>
+          )}
+
           {/* Feature 7: CSV Export */}
           <button
             onClick={() => exportCSV(items)}
@@ -1091,7 +1130,7 @@ export default function Home() {
             ✓ Mark Ready
           </button>
           <button
-            onClick={() => bulkDeleteMut.mutate({ ids: selectedIds })}
+            onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}
             className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20"
           >
             Delete All
@@ -1242,7 +1281,7 @@ export default function Home() {
                     onToggleSelect={() => toggleSelectGroup(key)}
                     onToggleExpand={() => toggleExpand(key)}
                     onUpdateField={(field, value) => updateConceptField(key, field, value)}
-                    onDelete={() => bulkDeleteMut.mutate({ ids: rows.map((r) => r.id) })}
+                    onDelete={() => confirmDelete(rows.map((r) => r.id), shared.generatedAdName || "this concept")}
                     onAddSize={(dim) => addSizeMut.mutate({ conceptKey: key, dimensions: dim })}
                     addSizeOpen={addSizeOpen === key}
                     setAddSizeOpen={(v) => setAddSizeOpen(v ? key : null)}
@@ -1354,40 +1393,97 @@ export default function Home() {
                             {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                           </button>
                         </td>
-                        {/* Feature 8: thumbnail */}
+                        {/* Feature 8: thumbnail with hover preview */}
                         <td className="px-2 py-1.5 w-12">
-                          <div
-                            style={{
-                              width: "40px",
-                              height: "40px",
-                              borderRadius: "3px",
-                              overflow: "hidden",
-                              flexShrink: 0,
-                              background: shared.fileUrl
-                                ? "var(--surface-3)"
-                                : (dimColors[shared.dimensions] ? `${dimColors[shared.dimensions]}20` : "var(--surface-3)"),
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            {shared.fileUrl ? (
-                              <img
-                                src={shared.fileUrl}
-                                alt={shared.filename}
-                                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                              />
-                            ) : (
-                              <span
-                                style={{
-                                  fontSize: "8px",
-                                  color: dimColors[shared.dimensions] || "var(--text-muted)",
-                                  fontFamily: "'IBM Plex Mono', monospace",
-                                  fontWeight: 700,
-                                }}
+                          <div className="relative group" style={{ width: "40px" }}>
+                            <div
+                              style={{
+                                width: "40px",
+                                height: "40px",
+                                borderRadius: "3px",
+                                overflow: "hidden",
+                                flexShrink: 0,
+                                background: shared.fileUrl
+                                  ? "var(--surface-3)"
+                                  : (dimColors[shared.dimensions] ? `${dimColors[shared.dimensions]}20` : "var(--surface-3)"),
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: shared.fileUrl ? "zoom-in" : "default",
+                              }}
+                            >
+                              {shared.fileUrl ? (
+                                <img
+                                  src={shared.fileUrl}
+                                  alt={shared.filename}
+                                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                />
+                              ) : (
+                                <span
+                                  style={{
+                                    fontSize: "8px",
+                                    color: dimColors[shared.dimensions] || "var(--text-muted)",
+                                    fontFamily: "'IBM Plex Mono', monospace",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {shared.dimensions?.replace(":", "×") || "—"}
+                                </span>
+                              )}
+                            </div>
+                            {/* Hover preview popover */}
+                            {shared.fileUrl && (
+                              <div
+                                className="pointer-events-none absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2
+                                           opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+                                style={{ filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.6))" }}
                               >
-                                {shared.dimensions?.replace(":", "×") || "—"}
-                              </span>
+                                <div
+                                  style={{
+                                    background: "var(--surface-1)",
+                                    border: "1px solid var(--surface-3)",
+                                    borderRadius: "6px",
+                                    overflow: "hidden",
+                                    width: "200px",
+                                  }}
+                                >
+                                  <img
+                                    src={shared.fileUrl}
+                                    alt={shared.filename}
+                                    style={{ width: "100%", height: "auto", display: "block", maxHeight: "240px", objectFit: "contain" }}
+                                  />
+                                  <div
+                                    className="px-2 py-1.5"
+                                    style={{ borderTop: "1px solid var(--surface-3)" }}
+                                  >
+                                    <p className="text-[10px] truncate" style={{ color: "var(--text-muted)", fontFamily: "'IBM Plex Mono', monospace" }}>
+                                      {shared.filename || "—"}
+                                    </p>
+                                    <div className="flex gap-1 mt-0.5 flex-wrap">
+                                      {rows.map((r) => (
+                                        <span key={r.id} className={dimBadgeClass(r.dimensions)}>
+                                          {r.dimensions}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                                {/* Arrow */}
+                                <div
+                                  style={{
+                                    position: "absolute",
+                                    bottom: "-5px",
+                                    left: "50%",
+                                    transform: "translateX(-50%)",
+                                    width: "10px",
+                                    height: "10px",
+                                    background: "var(--surface-1)",
+                                    borderRight: "1px solid var(--surface-3)",
+                                    borderBottom: "1px solid var(--surface-3)",
+                                    rotate: "45deg",
+                                  }}
+                                />
+                              </div>
                             )}
                           </div>
                         </td>
@@ -1500,7 +1596,7 @@ export default function Home() {
                             {/* Delete all */}
                             {!isGroupLocked && (
                               <button
-                                onClick={() => bulkDeleteMut.mutate({ ids: rows.map((r) => r.id) })}
+                                onClick={() => confirmDelete(rows.map((r) => r.id), shared.generatedAdName || "this concept")}
                                 className="p-1 text-zinc-600 hover:text-red-400 transition-colors"
                                 title="Delete all sizes"
                               >
@@ -1653,7 +1749,7 @@ export default function Home() {
                                               )}
                                               {!sizeLocked && (
                                                 <button
-                                                  onClick={() => deleteMut.mutate({ id: sizeRow.id })}
+                                                  onClick={() => confirmDelete([sizeRow.id], `${sizeRow.dimensions} size`)}
                                                   className="p-1 text-zinc-600 hover:text-red-400 transition-colors"
                                                   title="Delete this size"
                                                 >
@@ -1788,6 +1884,38 @@ export default function Home() {
             // onImport handled internally; just close
           }}
           onClose={() => setBatchDropFiles(null)}
+        />
+      )}
+
+      {/* Delete confirmation dialog */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+          <div className="rounded-xl p-6 w-full max-w-sm space-y-4" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)", fontFamily: "'IBM Plex Sans', sans-serif" }}>
+            <div>
+              <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>Delete {pendingDelete.label}?</h3>
+              <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>This can't be undone.</p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPendingDelete(null)} className="px-4 py-2 text-[12px] rounded-md" style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)", cursor: "pointer" }}>
+                Cancel
+              </button>
+              <button onClick={executeDelete} className="px-4 py-2 text-[12px] font-semibold rounded-md text-white" style={{ background: "#c0392b", border: "none", cursor: "pointer" }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Dialog */}
+      {showMergeDialog && selectedKeys.size >= 2 && (
+        <MergeDialog
+          groups={grouped.filter((g) => selectedKeys.has(g.key))}
+          onConfirm={(primaryConceptKey, secondaryConceptKeys) => {
+            mergeMut.mutate({ primaryConceptKey, secondaryConceptKeys });
+          }}
+          onClose={() => setShowMergeDialog(false)}
+          isLoading={mergeMut.isPending}
         />
       )}
 

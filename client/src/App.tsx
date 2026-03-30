@@ -1,14 +1,22 @@
+import { useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DashboardLayout from "./components/DashboardLayout";
 import Home from "./pages/Home";
 import UploadHistory from "./pages/UploadHistory";
 import MetaSettings from "./pages/MetaSettings";
 import NamingConfig from "./pages/NamingConfig";
+import Login from "./pages/Login";
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => !!localStorage.getItem("app-token"));
+
+  if (!authed) {
+    return <Login onSuccess={() => setAuthed(true)} />;
+  }
+
   return (
     <BrowserRouter>
-      <DashboardLayout>
+      <DashboardLayout onSignOut={() => { localStorage.removeItem("app-token"); setAuthed(false); }}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/history" element={<UploadHistory />} />

@@ -14,6 +14,10 @@ const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
       url: "/api/trpc",
+      headers() {
+        const token = localStorage.getItem("app-token");
+        return token ? { "x-app-token": token } : {};
+      },
     }),
   ],
 });
