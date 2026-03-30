@@ -1,38 +1,17 @@
 import { NavLink } from "react-router-dom";
 import {
   Upload,
-  FileText,
-  Target,
   History,
-  SlidersHorizontal,
-  Settings,
   BookOpen,
+  Settings,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-const NAV_SECTIONS = [
-  {
-    label: "Workflow",
-    items: [
-      { icon: Upload, label: "Upload Queue", path: "/" },
-      { icon: History, label: "Upload History", path: "/history" },
-    ],
-  },
-  {
-    label: "Content",
-    items: [
-      { icon: FileText, label: "Copy Library", path: "/copy-library" },
-      { icon: Target, label: "Angle Bank", path: "/angle-bank" },
-    ],
-  },
-  {
-    label: "Config",
-    items: [
-      { icon: SlidersHorizontal, label: "Field Options", path: "/field-options" },
-      { icon: BookOpen, label: "Naming Guide", path: "/naming-guide" },
-      { icon: Settings, label: "Meta Settings", path: "/settings" },
-    ],
-  },
+const NAV_ITEMS = [
+  { icon: Upload, label: "Upload Queue", path: "/" },
+  { icon: History, label: "Upload History", path: "/history" },
+  { icon: BookOpen, label: "Naming & Config", path: "/naming-config" },
+  { icon: Settings, label: "Meta Settings", path: "/settings" },
 ];
 
 function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: string }) {
@@ -85,22 +64,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {/* Sectioned nav */}
-        <nav className="flex-1 py-3 px-2 overflow-y-auto space-y-4">
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.label}>
-              <p
-                className="px-2.5 mb-1 text-[9px] font-semibold uppercase tracking-widest"
-                style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
-              >
-                {section.label}
-              </p>
-              <div className="space-y-px">
-                {section.items.map((item) => (
-                  <NavItem key={item.path} {...item} />
-                ))}
-              </div>
-            </div>
+        {/* Nav */}
+        <nav className="flex-1 py-3 px-2 overflow-y-auto space-y-px">
+          {NAV_ITEMS.map((item) => (
+            <NavItem key={item.path} {...item} />
           ))}
         </nav>
 

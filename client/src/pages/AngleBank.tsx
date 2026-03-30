@@ -90,9 +90,9 @@ export default function AngleBank() {
             className="font-semibold leading-none"
             style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "15px", letterSpacing: "-0.01em", color: "var(--text-primary)" }}
           >
-            Angle Bank
+            Creative Labels
           </h2>
-          <p className="mt-0.5" style={{ fontSize: "11px", color: "var(--text-muted)" }}>Strategic angles for ad creative</p>
+          <p className="mt-0.5" style={{ fontSize: "11px", color: "var(--text-muted)" }}>Angles and hooks used across ad creative</p>
         </div>
         <button
           onClick={openCreate}
@@ -101,7 +101,7 @@ export default function AngleBank() {
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
         >
-          <Plus className="w-3.5 h-3.5" /> Add Angle
+          <Plus className="w-3.5 h-3.5" /> Add Label
         </button>
       </div>
 

@@ -1,12 +1,9 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DashboardLayout from "./components/DashboardLayout";
 import Home from "./pages/Home";
-import CopyLibrary from "./pages/CopyLibrary";
-import AngleBank from "./pages/AngleBank";
 import UploadHistory from "./pages/UploadHistory";
-import FieldOptions from "./pages/FieldOptions";
 import MetaSettings from "./pages/MetaSettings";
-import NamingGuide from "./pages/NamingGuide";
+import NamingConfig from "./pages/NamingConfig";
 
 export default function App() {
   return (
@@ -14,12 +11,14 @@ export default function App() {
       <DashboardLayout>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/copy-library" element={<CopyLibrary />} />
-          <Route path="/angle-bank" element={<AngleBank />} />
           <Route path="/history" element={<UploadHistory />} />
-          <Route path="/field-options" element={<FieldOptions />} />
+          <Route path="/naming-config" element={<NamingConfig />} />
           <Route path="/settings" element={<MetaSettings />} />
-          <Route path="/naming-guide" element={<NamingGuide />} />
+          {/* Legacy redirects */}
+          <Route path="/copy-library" element={<Navigate to="/naming-config" replace />} />
+          <Route path="/angle-bank" element={<Navigate to="/naming-config" replace />} />
+          <Route path="/field-options" element={<Navigate to="/naming-config" replace />} />
+          <Route path="/naming-guide" element={<Navigate to="/naming-config" replace />} />
         </Routes>
       </DashboardLayout>
     </BrowserRouter>
