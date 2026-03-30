@@ -175,7 +175,7 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Bulk defaults — apply to ALL rows
-  const [bulkDefaults, setBulkDefaults] = useState<Partial<AdNameFields> & { handle?: string }>({
+  const [bulkDefaults, setBulkDefaults] = useState<Partial<AdNameFields> & { handle?: string; agency?: string }>({
     brand: "OIO",
     initiative: "",
     variation: "V1",
@@ -187,6 +187,7 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
     dimensions: "",
     copySlug: "",
     date: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })(),
+    agency: "",
   });
 
   const { data: existingItems = [] } = trpc.queue.list.useQuery(undefined);
@@ -300,6 +301,7 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
           cta: metaDefaults?.defaultCta || "SHOP_NOW",
           displayUrl: metaDefaults?.defaultDisplayUrl || null,
           destinationUrl: metaDefaults?.defaultDestinationUrl || null,
+          agency: bulkDefaults.agency || null,
           conceptKey,
         });
 
@@ -372,6 +374,16 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
                 <SelectCell value={(bulkDefaults as any)[col.key] || ""} options={optionsMap[col.key] || []} onChange={(v) => applyBulkToAll(col.key, v)} />
               </div>
             ))}
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Agency:</span>
+              <input
+                type="text"
+                value={bulkDefaults.agency || ""}
+                onChange={(e) => setBulkDefaults((p) => ({ ...p, agency: e.target.value }))}
+                placeholder="e.g. Agency A"
+                style={{ width: "90px", padding: "3px 6px", fontSize: "11px", background: "var(--surface-1)", border: "1px solid var(--surface-3)", borderRadius: "4px", color: "var(--text-primary)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+              />
+            </div>
           </div>
         </div>
 

@@ -76,6 +76,7 @@ export const uploadQueue = sqliteTable("upload_queue", {
   handle: text("handle"), // Which FB/IG handle to run through (e.g. whitelisted creator handle). Does not affect ad name.
   cta: text("cta"), // Per-ad CTA override (e.g. "SHOP_NOW"), falls back to meta_settings default
   displayUrl: text("display_url"), // Per-ad display URL override (e.g. "korrus.com"), falls back to default
+  agency: text("agency"),  // Which agency/partner delivered this creative (e.g. "Agency A", "Agency B", "Internal")
   ...timestamps,
 });
 

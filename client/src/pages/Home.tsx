@@ -4,6 +4,9 @@ import { useFieldOptions } from "../hooks/useFieldOptions";
 import { InlineText, InlineSelect } from "../components/InlineEditCell";
 import BatchDropDialog, { ParsedRow } from "../components/BatchDropDialog";
 import MergeDialog from "../components/MergeDialog";
+import PipelineView from "../components/PipelineView";
+import DashboardMetrics from "../components/DashboardMetrics";
+import CSVImportDialog from "../components/CSVImportDialog";
 import {
   generateAdName,
   parseFilenameToFields,
@@ -27,6 +30,8 @@ import {
   Search,
   Check,
   GitMerge,
+  Kanban,
+  FileSpreadsheet,
 } from "lucide-react";
 import { X } from "lucide-react";
 
@@ -101,6 +106,7 @@ type QueueItem = {
   handle: string | null;
   cta: string | null;
   displayUrl: string | null;
+  agency: string | null;
   fileUrl: string | null;
   fileKey: string | null;
   fileMimeType: string | null;
@@ -497,16 +503,20 @@ export default function Home() {
   const dragCounterRef = useRef(0);
 
   // Feature 2: view mode
-  const [viewMode, setViewMode] = useState<"table" | "card">(() => {
+  const [viewMode, setViewMode] = useState<"table" | "card" | "pipeline">(() => {
     try {
-      return (localStorage.getItem("korrus-view-mode") as "table" | "card") || "table";
+      return (localStorage.getItem("korrus-view-mode") as "table" | "card" | "pipeline") || "table";
     } catch {
       return "table";
     }
   });
 
+  // CSV import dialog
+  const [showCSVImport, setShowCSVImport] = useState(false);
+
   // Feature 4: search
   const [searchText, setSearchText] = useState("");
+  const [agencyFilter, setAgencyFilter] = useState("");
 
   // Feature 5: batch defaults panel
   const [showBatchDefaults, setShowBatchDefaults] = useState(false);
@@ -632,18 +642,30 @@ export default function Home() {
 
   // Feature 4: filtered grouped array
   const filteredGrouped = useMemo(() => {
-    if (!searchText.trim()) return grouped;
-    const q = searchText.toLowerCase();
-    return grouped.filter(({ shared, rows }) => {
-      const fields = [
-        shared.brand, shared.initiative, shared.angle, shared.source,
-        shared.product, shared.contentType, shared.creativeType, shared.copySlug,
-        shared.filename, shared.date, shared.generatedAdName, shared.handle ?? "",
-        ...rows.map((r) => r.dimensions),
-      ];
-      return fields.some((f) => f?.toLowerCase().includes(q));
-    });
-  }, [grouped, searchText]);
+    let result = grouped;
+    // Agency filter
+    if (agencyFilter) {
+      result = result.filter(({ shared }) => {
+        if (agencyFilter === "__untagged__") return !shared.agency;
+        return shared.agency === agencyFilter;
+      });
+    }
+    // Text search
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase();
+      result = result.filter(({ shared, rows }) => {
+        const fields = [
+          shared.brand, shared.initiative, shared.angle, shared.source,
+          shared.product, shared.contentType, shared.creativeType, shared.copySlug,
+          shared.filename, shared.date, shared.generatedAdName, shared.handle ?? "",
+          shared.agency ?? "",
+          ...rows.map((r) => r.dimensions),
+        ];
+        return fields.some((f) => f?.toLowerCase().includes(q));
+      });
+    }
+    return result;
+  }, [grouped, searchText, agencyFilter]);
 
   // All row IDs in the current view (for select-all)
   const allKeys = useMemo(() => filteredGrouped.map((g) => g.key), [filteredGrouped]);
@@ -964,7 +986,25 @@ export default function Home() {
             <Settings2 className="w-3.5 h-3.5" /> Defaults
           </button>
 
-          {/* Feature 2: View toggle */}
+          {/* CSV Import */}
+          <button
+            onClick={() => setShowCSVImport(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 transition-colors text-[11px] font-medium rounded-md"
+            style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+            title="Import from CSV / Agency Spreadsheet"
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,153,198,0.5)";
+              (e.currentTarget as HTMLButtonElement).style.color = "#60A7C8";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--surface-3)";
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+            }}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" /> CSV
+          </button>
+
+          {/* View toggle */}
           <div
             className="flex items-center rounded-md overflow-hidden"
             style={{ border: "1px solid var(--surface-3)" }}
@@ -994,6 +1034,19 @@ export default function Home() {
               title="Card view"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setViewMode("pipeline")}
+              className="px-2 py-1.5 transition-colors"
+              style={{
+                background: viewMode === "pipeline" ? "var(--surface-2)" : "transparent",
+                color: viewMode === "pipeline" ? "var(--text-primary)" : "var(--text-muted)",
+                border: "none",
+                cursor: "pointer",
+              }}
+              title="Pipeline view"
+            >
+              <Kanban className="w-3.5 h-3.5" />
             </button>
           </div>
 
@@ -1085,6 +1138,9 @@ export default function Home() {
         </div>
       )}
 
+      {/* Dashboard Metrics */}
+      <DashboardMetrics items={allItems as any} />
+
       {/* Status filter tabs */}
       <div
         className="flex-shrink-0 flex items-center gap-0.5 px-5 py-2 overflow-x-auto"
@@ -1151,6 +1207,23 @@ export default function Home() {
             {filteredGrouped.length} result{filteredGrouped.length !== 1 ? "s" : ""}
           </span>
         )}
+        {/* Agency filter */}
+        {(() => {
+          const agencies = [...new Set(allItems.map((i) => i.agency).filter(Boolean))] as string[];
+          if (agencies.length === 0) return null;
+          return (
+            <select
+              value={agencyFilter}
+              onChange={(e) => setAgencyFilter(e.target.value)}
+              className="text-[11px] px-2 py-1.5 rounded-md focus:outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: agencyFilter ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+            >
+              <option value="">All agencies</option>
+              {agencies.map((a) => <option key={a} value={a}>{a}</option>)}
+              <option value="__untagged__">Untagged</option>
+            </select>
+          );
+        })()}
       </div>
 
       {/* Bulk actions bar */}
@@ -1337,6 +1410,16 @@ export default function Home() {
               })}
             </div>
           </div>
+        )}
+
+        {/* Pipeline view */}
+        {viewMode === "pipeline" && (
+          <PipelineView
+            groups={grouped}
+            onUpdateStatus={(ids, status) => bulkStatusMut.mutate({ ids, status })}
+            onSelect={(key) => toggleSelectGroup(key)}
+            selectedKeys={selectedKeys}
+          />
         )}
 
         {/* Table view */}
@@ -1925,6 +2008,17 @@ export default function Home() {
             // onImport handled internally; just close
           }}
           onClose={() => setBatchDropFiles(null)}
+        />
+      )}
+
+      {/* CSV Import Dialog */}
+      {showCSVImport && (
+        <CSVImportDialog
+          onImport={() => {
+            utils.queue.list.invalidate();
+            setShowCSVImport(false);
+          }}
+          onClose={() => setShowCSVImport(false)}
         />
       )}
 

@@ -70,6 +70,7 @@ const uploadQueueRouter = t.router({
         handle: z.string().optional().nullable(),
         cta: z.string().optional().nullable(),
         displayUrl: z.string().optional().nullable(),
+        agency: z.string().optional().nullable(),
       })
     )
     .mutation(({ input }) => {
@@ -124,6 +125,7 @@ const uploadQueueRouter = t.router({
         handle: z.string().optional().nullable(),
         cta: z.string().optional().nullable(),
         displayUrl: z.string().optional().nullable(),
+        agency: z.string().optional().nullable(),
         status: z
           .enum(["draft", "ready", "uploading", "uploaded", "error"])
           .optional(),
@@ -206,6 +208,7 @@ const uploadQueueRouter = t.router({
         adSetId: existing.adSetId, adSetName: existing.adSetName,
         destinationUrl: existing.destinationUrl, headline: existing.headline,
         bodyCopy: existing.bodyCopy,
+        agency: existing.agency,
         conceptKey: input.conceptKey, generatedAdName,
         status: "draft", metaAdId: null, metaCreativeId: null,
         errorMessage: null, uploadedAt: null, fileUrl: null,
