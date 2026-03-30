@@ -4,9 +4,14 @@ import * as schema from "../drizzle/schema.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { mkdirSync } from "fs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // In production on Railway, set DB_PATH to the mounted volume path (e.g. /app/data/data.db)
 const dbPath = process.env.DB_PATH ?? path.join(__dirname, "..", "data.db");
+
+// Ensure the directory for the DB file exists (important on Railway with volumes)
+mkdirSync(path.dirname(dbPath), { recursive: true });
 
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = DELETE"); // Avoid WAL split-brain between server and CLI
