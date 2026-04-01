@@ -87,7 +87,8 @@ function cellStyle(value: string | undefined): React.CSSProperties {
   if (value && value.trim()) {
     return { background: "rgba(46,160,67,0.08)", border: "1px solid rgba(46,160,67,0.2)", color: "var(--text-primary)", borderRadius: "3px", padding: "2px 6px" };
   }
-  return { background: "rgba(248,81,73,0.08)", border: "1px solid rgba(248,81,73,0.2)", color: "var(--text-secondary)", borderRadius: "3px", padding: "2px 6px" };
+  // Neutral gray for empty — not red. Fields can be filled later on the Inbox screen.
+  return { background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: "var(--text-muted)", borderRadius: "3px", padding: "2px 6px" };
 }
 
 function EditableCell({ value, onChange, placeholder }: { value: string | undefined; onChange: (v: string) => void; placeholder?: string }) {

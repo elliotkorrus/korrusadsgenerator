@@ -57,7 +57,6 @@ export function parseFilenameToFields(
     /\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i,
     ""
   );
-  // filename will be set at end, after dimension token is stripped
 
   // Content type from extension
   if (ext) {
@@ -68,8 +67,11 @@ export function parseFilenameToFields(
     else if (e === "gif") result.contentType = "GIF";
   }
 
-  // Creative type keywords (scanned against full original filename, before splitting)
-  const lower = cleanName.toLowerCase();
+  // Normalize: replace spaces, hyphens, and dots with underscores for uniform tokenisation
+  const normalized = cleanName.replace(/[\s\-\.]+/g, "_");
+  const lower = normalized.toLowerCase();
+
+  // Creative type keywords (scanned against full filename)
   const creativeTypeMap: Record<string, string> = {
     ugc: "UGC",
     meme: "MEME",
@@ -78,12 +80,20 @@ export function parseFilenameToFields(
     mashup: "MASHUP",
     screen: "SCREEN",
     testi: "TESTI",
-    "ai-gen": "AI",
+    "ai_gen": "AI",
     catalog: "CATALOG",
+    stills: "ESTATIC",
+    still: "ESTATIC",
+    static: "ESTATIC",
+    carousel: "CAR",
   };
   for (const [keyword, type] of Object.entries(creativeTypeMap)) {
     if (lower.includes(keyword)) {
       result.creativeType = type;
+      // "stills" also confirms contentType = IMG
+      if (keyword === "stills" || keyword === "still" || keyword === "static") {
+        if (!result.contentType) result.contentType = "IMG";
+      }
       break;
     }
   }
@@ -101,28 +111,46 @@ export function parseFilenameToFields(
     creator: "CREATOR",
   };
 
+  // Initiative keywords — common campaign naming patterns
+  const INITIATIVE_MAP: Record<string, string> = {
+    evergreen: "e_001",
+    evg: "e_001",
+    spring: "s_001",
+    summer: "s_002",
+    fall: "s_003",
+    autumn: "s_003",
+    winter: "s_004",
+    launch: "s_001",
+    bfcm: "s_001",
+    holiday: "s_001",
+    q1: "q_001",
+    q2: "q_002",
+    q3: "q_003",
+    q4: "q_004",
+  };
+
   // Known dimension values after conversion
   const VALID_DIMS = new Set(["9:16", "4:5", "1:1", "16:9"]);
 
-  // Split the clean name into tokens by underscore
-  const tokens = cleanName.split("_");
+  // Split the normalized name into tokens by underscore
+  const tokens = normalized.split("_").filter(Boolean);
 
   // Track which token indices have been claimed
   const claimed = new Set<number>();
 
+  // Always default brand and product
+  result.brand = "OIO";
+  result.product = "OIO";
+
   // --- Token 0: Brand ---
-  // Filename prefix "korrus" or "krs" identifies the company; ad brand is always "OIO"
   if (tokens.length > 0) {
     const t0 = tokens[0].toUpperCase();
     if (t0 === "KORRUS" || t0 === "KRS" || t0 === "OIO") {
-      result.brand = "OIO";
       claimed.add(0);
     }
   }
-  // Default product
-  result.product = "OIO";
 
-  // --- Last token matching /^\d+x\d+$/i: Dimensions ---
+  // --- Dimension tokens: NxN pattern ---
   for (let i = tokens.length - 1; i >= 0; i--) {
     if (/^\d+x\d+$/i.test(tokens[i])) {
       const parts = tokens[i].toLowerCase().split("x");
@@ -135,16 +163,30 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Token matching /^\d{4}-\d{2}$/: Date (YYYY-MM) ---
+  // --- Dimension from keywords in filename ---
+  if (!result.dimensions) {
+    if (/story|stories|reel|9.?16|9x16|vertical/i.test(lower)) result.dimensions = "9:16";
+    else if (/4.?5|4x5/i.test(lower)) result.dimensions = "4:5";
+    else if (/1.?1|1x1|square/i.test(lower)) result.dimensions = "1:1";
+    else if (/16.?9|16x9|landscape|horizontal|wide/i.test(lower)) result.dimensions = "16:9";
+  }
+
+  // --- Date: YYYY-MM pattern ---
   for (let i = 0; i < tokens.length; i++) {
-    if (/^\d{4}-\d{2}$/.test(tokens[i])) {
-      result.date = tokens[i];
+    if (/^\d{4}-?\d{2}$/.test(tokens[i]) && tokens[i].length <= 7) {
+      const t = tokens[i];
+      result.date = t.includes("-") ? t : `${t.slice(0, 4)}-${t.slice(4)}`;
       claimed.add(i);
       break;
     }
   }
+  // Default date to current month if not found
+  if (!result.date) {
+    const d = new Date();
+    result.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
 
-  // --- Token matching known sources (case-insensitive) ---
+  // --- Source tokens ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
     const tl = tokens[i].toLowerCase();
@@ -155,26 +197,65 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Initiative: token "s" (or similar) followed by numeric token ---
-  // Pattern: token[i] is a short alpha label AND token[i+1] is purely numeric
-  for (let i = 0; i < tokens.length - 1; i++) {
-    if (claimed.has(i) || claimed.has(i + 1)) continue;
-    if (/^[a-zA-Z]{1,3}$/.test(tokens[i]) && /^\d+$/.test(tokens[i + 1])) {
-      result.initiative = `${tokens[i]}_${tokens[i + 1]}`;
+  // --- Initiative from keywords ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    const tl = tokens[i].toLowerCase();
+    if (tl in INITIATIVE_MAP) {
+      result.initiative = INITIATIVE_MAP[tl];
       claimed.add(i);
-      claimed.add(i + 1);
       break;
     }
   }
 
-  // --- Variation: single digit token after initiative ---
-  // Find the last claimed initiative index and look one ahead
+  // --- Initiative: short alpha + numeric pattern (e.g. s_004) ---
+  if (!result.initiative) {
+    for (let i = 0; i < tokens.length - 1; i++) {
+      if (claimed.has(i) || claimed.has(i + 1)) continue;
+      if (/^[a-zA-Z]{1,3}$/.test(tokens[i]) && /^\d+$/.test(tokens[i + 1])) {
+        result.initiative = `${tokens[i]}_${tokens[i + 1]}`;
+        claimed.add(i);
+        claimed.add(i + 1);
+        break;
+      }
+    }
+  }
+
+  // --- Variation: "v1", "v2", "V1", or standalone single digit ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
-    if (/^\d$/.test(tokens[i])) {
-      result.variation = `v${tokens[i]}`;
+    if (/^v\d+$/i.test(tokens[i])) {
+      result.variation = tokens[i].toUpperCase();
       claimed.add(i);
       break;
+    }
+  }
+  if (!result.variation) {
+    for (let i = 0; i < tokens.length; i++) {
+      if (claimed.has(i)) continue;
+      if (/^\d$/.test(tokens[i])) {
+        result.variation = `V${tokens[i]}`;
+        claimed.add(i);
+        break;
+      }
+    }
+  }
+
+  // --- Claim creative type keywords so they don't end up in the angle ---
+  const CREATIVE_TYPE_WORDS = new Set(["stills", "still", "static", "ugc", "meme", "gfx", "motion", "mashup", "screen", "testi", "ai_gen", "catalog", "carousel"]);
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    if (CREATIVE_TYPE_WORDS.has(tokens[i].toLowerCase())) {
+      claimed.add(i);
+    }
+  }
+
+  // --- Claim dimension keyword tokens ---
+  const DIM_WORDS = new Set(["story", "stories", "reel", "vertical", "landscape", "horizontal", "wide", "square", "feed"]);
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    if (DIM_WORDS.has(tokens[i].toLowerCase())) {
+      claimed.add(i);
     }
   }
 
@@ -186,23 +267,24 @@ export function parseFilenameToFields(
     }
   }
   if (angleTokens.length > 0) {
-    result.angle = angleTokens.join("_");
+    // Join with hyphens for readability, capitalise first letter of each word
+    result.angle = angleTokens
+      .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+      .join("-");
   }
 
   // --- creativeType default ---
   if (!result.creativeType) result.creativeType = "ESTATIC";
 
   // --- Filename: cleanName minus the dimension token ---
-  // Strip the dimension token so that 9x16 and 1x1 variants share the same filename
-  // (and therefore the same conceptKey), enabling proper grouping.
   if (result.dimensions) {
-    const dimToken = result.dimensions.replace(":", "x"); // e.g. "9x16"
+    const dimToken = result.dimensions.replace(":", "x");
     const filenameTokens = tokens.filter(
       (t) => t.toLowerCase() !== dimToken.toLowerCase()
     );
     result.filename = filenameTokens.join("_");
   } else {
-    result.filename = cleanName;
+    result.filename = normalized;
   }
 
   return result;
