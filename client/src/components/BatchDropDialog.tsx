@@ -151,13 +151,13 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
   const { data: copyEntries = [] } = trpc.copy.list.useQuery(undefined);
 
   // Field options for dropdowns
-  const fieldOptions = useFieldOptions();
-  const sourceOpts = fieldOptions.filter((o: any) => o.field === "source" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
-  const contentTypeOpts = fieldOptions.filter((o: any) => o.field === "contentType" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
-  const creativeTypeOpts = fieldOptions.filter((o: any) => o.field === "creativeType" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
-  const angleOpts = fieldOptions.filter((o: any) => o.field === "angle" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
-  const productOpts = fieldOptions.filter((o: any) => o.field === "product" && o.isActive).map((o: any) => ({ value: o.value, label: o.label || o.value }));
-  const dimsOpts = [{ value: "9:16", label: "9:16" }, { value: "4:5", label: "4:5" }, { value: "1:1", label: "1:1" }, { value: "16:9", label: "16:9" }];
+  const { grouped: fieldOptsGrouped } = useFieldOptions();
+  const sourceOpts = fieldOptsGrouped["source"] || [{ value: "UGC", label: "UGC" }, { value: "Studio", label: "Studio" }];
+  const contentTypeOpts = fieldOptsGrouped["contentType"] || [{ value: "VID", label: "Video" }, { value: "IMG", label: "Image" }];
+  const creativeTypeOpts = fieldOptsGrouped["creativeType"] || [{ value: "ESTATIC", label: "Elevated Static" }];
+  const angleOpts = fieldOptsGrouped["angle"] || [];
+  const productOpts = fieldOptsGrouped["product"] || [{ value: "OIO", label: "OIO" }];
+  const dimsOpts = [{ value: "9:16", label: "9:16 (story)" }, { value: "4:5", label: "4:5 (feed)" }, { value: "1:1", label: "1:1 (feed)" }, { value: "16:9", label: "16:9 (feed)" }];
   const copySlugOpts = (copyEntries as any[]).filter((c: any) => c.status === "active").map((c: any) => ({ value: c.copySlug, label: c.copySlug }));
 
   const optionsMap: Record<string, { value: string; label: string }[]> = {
