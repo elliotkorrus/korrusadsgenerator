@@ -12,13 +12,13 @@
   --brand: #0099C6;
   --brand-dim: #007a9e;
   --brand-muted: oklch(55% 0.08 220);
-  --surface-0: #f8f9fa;
+  --surface-0: #f1f5f9;
   --surface-1: #ffffff;
-  --surface-2: #f0f1f3;
-  --surface-3: #d8dce0;
-  --text-primary: #1a1d21;
-  --text-secondary: #5a6069;
-  --text-muted: #8b949e;
+  --surface-2: #e2e8f0;
+  --surface-3: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
 }
 
 body {
@@ -42,5 +42,5 @@ body {
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, #0099C6 30%, #d8dce0);
+  background: color-mix(in srgb, #0099C6 30%, #cbd5e1);
 }

@@ -66,7 +66,7 @@ interface BatchDropDialogProps {
   onClose: () => void;
 }
 
-const FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[] = [
+const ALL_FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[] = [
   { key: "brand", label: "Brand", width: "70px" },
   { key: "initiative", label: "Initiative", width: "90px" },
   { key: "variation", label: "Var.", width: "50px" },
@@ -79,6 +79,15 @@ const FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[
   { key: "contentType", label: "Format", width: "70px" },
   { key: "creativeType", label: "Type", width: "80px" },
 ];
+
+const ESSENTIAL_FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[] = [
+  { key: "angle", label: "Angle", width: "100px" },
+  { key: "dimensions", label: "Dims", width: "65px" },
+  { key: "contentType", label: "Format", width: "70px" },
+];
+
+// FIELD_COLUMNS is used by the bulk defaults bar — always shows all select fields
+const FIELD_COLUMNS = ALL_FIELD_COLUMNS;
 
 // Fields that get dropdown selects
 const SELECT_FIELDS = new Set(["source", "angle", "contentType", "creativeType", "dimensions", "product", "copySlug"]);
@@ -174,6 +183,8 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [showAllFields, setShowAllFields] = useState(false);
+  const visibleColumns = showAllFields ? ALL_FIELD_COLUMNS : ESSENTIAL_FIELD_COLUMNS;
 
   // Bulk defaults — apply to ALL rows
   const [bulkDefaults, setBulkDefaults] = useState<Partial<AdNameFields> & { handle?: string; agency?: string }>({
@@ -394,13 +405,27 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
             <thead style={{ position: "sticky", top: 0, zIndex: 10, background: "var(--surface-2)", borderBottom: "1px solid var(--surface-3)" }}>
               <tr>
                 <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap", width: "48px" }}>Preview</th>
-                <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap", minWidth: "160px" }}>Filename</th>
-                {FIELD_COLUMNS.map((col) => (
+                <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap", minWidth: "160px" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
+                    <span>Filename</span>
+                    <span
+                      onClick={() => setShowAllFields((v) => !v)}
+                      style={{ fontSize: "10px", color: "var(--text-muted)", cursor: "pointer", fontWeight: 400, textTransform: "none", letterSpacing: "normal" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLSpanElement).style.color = "#0099C6"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLSpanElement).style.color = "var(--text-muted)"; }}
+                    >
+                      {showAllFields ? "Show fewer fields" : "Show all fields"}
+                    </span>
+                  </div>
+                </th>
+                {visibleColumns.map((col) => (
                   <th key={col.key} style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap", width: col.width }}>
                     {col.label}
                   </th>
                 ))}
-                <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap" }}>Handle</th>
+                {showAllFields && (
+                  <th style={{ padding: "8px 12px", textAlign: "left", color: "var(--text-muted)", fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap" }}>Handle</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -437,15 +462,17 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
                     )}
                   </td>
                   {/* Field cells — dropdowns for select fields, text for others */}
-                  {FIELD_COLUMNS.map((col) => (
+                  {visibleColumns.map((col) => (
                     <td key={col.key} style={{ padding: "6px 8px" }}>
                       {renderCell(row, i, col)}
                     </td>
                   ))}
-                  {/* Handle */}
-                  <td style={{ padding: "6px 8px" }}>
-                    <EditableCell value={row.handle} onChange={(v) => updateHandle(i, v)} placeholder="@creator" />
-                  </td>
+                  {/* Handle — only shown when all fields expanded */}
+                  {showAllFields && (
+                    <td style={{ padding: "6px 8px" }}>
+                      <EditableCell value={row.handle} onChange={(v) => updateHandle(i, v)} placeholder="@creator" />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -172,7 +172,7 @@ export default function MetaSettings() {
             {updateMut.isPending ? "Saving..." : "Save Settings"}
           </button>
           {updateMut.isSuccess && (
-            <span className="text-sm text-green-400 py-2">Saved!</span>
+            <span className="text-sm text-green-600 py-2">Saved!</span>
           )}
         </div>
       </form>

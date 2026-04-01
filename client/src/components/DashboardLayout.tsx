@@ -1,4 +1,4 @@
-import { NavLink, Link, useLocation } from "react-router-dom";
+import { NavLink, Link, useLocation, useSearchParams } from "react-router-dom";
 import {
   Inbox,
   Send,
@@ -49,7 +49,9 @@ function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: 
 
 export default function DashboardLayout({ children, onSignOut }: { children: ReactNode; onSignOut?: () => void }) {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const isHome = location.pathname === "/";
+  const currentView = searchParams.get("view") || "inbox";
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--surface-0)", color: "var(--text-primary)" }}>
@@ -84,23 +86,26 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
             Upload Queue
           </p>
           <div className="space-y-px mb-3">
-            {FOCUS_VIEWS.map((view) => (
-              <Link
-                key={view.key}
-                to="/"
-                className={`flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
-                  isHome ? "border-l-2 pl-[9px]" : "border-l-2 border-transparent"
-                }`}
-                style={
-                  isHome
-                    ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)" }
-                    : { color: "var(--text-secondary)" }
-                }
-              >
-                <view.icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: isHome ? view.accent : undefined }} />
-                {view.label}
-              </Link>
-            ))}
+            {FOCUS_VIEWS.map((view) => {
+              const isActive = isHome && currentView === view.key;
+              return (
+                <Link
+                  key={view.key}
+                  to={`/?view=${view.key}`}
+                  className={`flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
+                    isActive ? "border-l-2 pl-[9px]" : "border-l-2 border-transparent"
+                  }`}
+                  style={
+                    isActive
+                      ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)" }
+                      : { color: "var(--text-secondary)" }
+                  }
+                >
+                  <view.icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: isActive ? view.accent : undefined }} />
+                  {view.label}
+                </Link>
+              );
+            })}
           </div>
 
           {/* Divider */}

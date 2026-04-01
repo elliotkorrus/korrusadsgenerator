@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { trpc } from "../lib/trpc";
 import { useFieldOptions } from "../hooks/useFieldOptions";
 import { InlineText, InlineSelect } from "../components/InlineEditCell";
@@ -7,6 +8,7 @@ import MergeDialog from "../components/MergeDialog";
 import PipelineView from "../components/PipelineView";
 import DashboardMetrics from "../components/DashboardMetrics";
 import CSVImportDialog from "../components/CSVImportDialog";
+import DetailDrawer from "../components/DetailDrawer";
 import {
   generateAdName,
   parseFilenameToFields,
@@ -116,12 +118,12 @@ function getCurrentYearMonth(): string {
 function dimBadgeClass(dim: string, _status?: string): string {
   const base = "rounded-sm px-1.5 py-0.5 text-[9px] font-mono font-bold border inline-flex items-center gap-1";
   const dimStyles: Record<string, string> = {
-    "9:16": "bg-violet-500/10 text-violet-300 border-violet-500/15",
-    "4:5": "bg-sky-500/10 text-sky-300 border-sky-500/15",
-    "1:1": "bg-teal-500/10 text-teal-300 border-teal-500/15",
-    "16:9": "bg-amber-500/10 text-amber-300 border-amber-500/15",
+    "9:16": "bg-violet-500/10 text-violet-700 border-violet-500/20",
+    "4:5": "bg-sky-500/10 text-sky-700 border-sky-500/20",
+    "1:1": "bg-teal-500/10 text-teal-700 border-teal-500/20",
+    "16:9": "bg-amber-500/10 text-amber-700 border-amber-500/20",
   };
-  return `${base} ${dimStyles[dim] || "bg-zinc-500/10 text-zinc-300 border-zinc-500/15"}`;
+  return `${base} ${dimStyles[dim] || "bg-zinc-500/10 text-zinc-600 border-zinc-500/20"}`;
 }
 
 // Compute "worst" status for a group
@@ -262,7 +264,7 @@ function StatusChecklist({ errors }: { errors: string[] }) {
   return (
     <div className="relative inline-block" ref={popoverRef}>
       <button
-        className="ml-1 inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-sm bg-red-500/10 text-red-400 border border-red-500/15 cursor-pointer"
+        className="ml-1 inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-sm bg-red-50 text-red-700 border border-red-200 cursor-pointer"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         title="View validation errors"
       >!
@@ -301,6 +303,7 @@ function ConceptCard({
   onToggleExpand,
   onUpdateField,
   onDelete,
+  onOpenDrawer,
   onAddSize,
   addSizeOpen,
   setAddSizeOpen,
@@ -324,6 +327,7 @@ function ConceptCard({
   onToggleExpand: () => void;
   onUpdateField: (field: string, value: string) => void;
   onDelete: () => void;
+  onOpenDrawer: () => void;
   onAddSize: (dim: string) => void;
   addSizeOpen: boolean;
   setAddSizeOpen: (v: boolean) => void;
@@ -356,11 +360,11 @@ function ConceptCard({
         background: isSelected ? "rgba(0,153,198,0.04)" : "var(--surface-1)",
       }}
     >
-      {/* Thumbnail */}
+      {/* Thumbnail — click to open detail drawer */}
       <div
         className="relative cursor-pointer"
         style={{ aspectRatio: "16/9", background: "var(--surface-2)", overflow: "hidden" }}
-        onClick={onToggleExpand}
+        onClick={onOpenDrawer}
       >
         {shared.fileUrl ? (
           <img
@@ -488,7 +492,7 @@ function ConceptCard({
         {!isGroupLocked && (
           <button
             onClick={onDelete}
-            className="ml-auto p-1 text-zinc-600 hover:text-red-400 transition-colors"
+            className="ml-auto p-1 text-zinc-600 hover:text-red-600 transition-colors"
             title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -553,7 +557,23 @@ function ConceptCard({
 // ── Main Home component ───────────────────────────────────────────
 export default function Home() {
   const utils = trpc.useUtils();
-  const [focusView, setFocusView] = useState<string>("inbox");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [focusView, _setFocusView] = useState<string>(
+    () => searchParams.get("view") || "inbox"
+  );
+  const setFocusView = useCallback(
+    (view: string) => {
+      _setFocusView(view);
+      setSearchParams({ view }, { replace: true });
+    },
+    [setSearchParams]
+  );
+  // Sync focusView when URL search param changes (e.g. sidebar link click)
+  useEffect(() => {
+    const viewParam = searchParams.get("view") || "inbox";
+    _setFocusView(viewParam);
+  }, [searchParams]);
+
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -574,6 +594,9 @@ export default function Home() {
 
   // CSV import dialog
   const [showCSVImport, setShowCSVImport] = useState(false);
+
+  // Detail drawer
+  const [drawerItemId, setDrawerItemId] = useState<number | null>(null);
 
   // Feature 4: search
   const [searchText, setSearchText] = useState("");
@@ -613,6 +636,7 @@ export default function Home() {
   // Always fetch all items for accurate group counts; filter client-side for the active view
   const { data: rawAllItems = [] } = trpc.queue.list.useQuery({});
   const allItems = rawAllItems as QueueItem[];
+  const drawerItem = useMemo(() => drawerItemId ? allItems.find(i => i.id === drawerItemId) || null : null, [drawerItemId, allItems]);
   const activeFocusView = FOCUS_VIEWS.find((v) => v.key === focusView) || FOCUS_VIEWS[0];
   const items = useMemo(
     () => allItems.filter((i) => (activeFocusView.statuses as readonly string[]).includes(i.status)),
@@ -871,11 +895,11 @@ export default function Home() {
   }, []);
 
   const statusColors: Record<string, string> = {
-    draft: "bg-zinc-100 text-zinc-500 border border-zinc-300",
-    ready: "bg-green-500/10 text-green-400 border border-green-500/15",
-    uploading: "bg-blue-400/10 text-blue-300 border border-blue-400/15",
-    uploaded: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15",
-    error: "bg-red-500/10 text-red-400 border border-red-500/15",
+    draft: "bg-slate-100 text-slate-500 border border-slate-300",
+    ready: "bg-green-50 text-green-700 border border-green-200",
+    uploading: "bg-blue-50 text-blue-700 border border-blue-200",
+    uploaded: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+    error: "bg-red-50 text-red-700 border border-red-200",
   };
 
   const updateConceptField = async (conceptKey: string, field: string, value: string) => {
@@ -1319,13 +1343,13 @@ export default function Home() {
           <div className="w-px h-4" style={{ background: "var(--surface-3)" }} />
           <button
             onClick={() => bulkStatusMut.mutate({ ids: selectedIds, status: "ready" })}
-            className="px-2.5 py-1 text-xs bg-green-500/10 text-green-400 border border-green-500/20 rounded-md hover:bg-green-500/20"
+            className="px-2.5 py-1 text-xs bg-green-50 text-green-700 border border-green-200 rounded-md hover:bg-green-100"
           >
             ✓ Mark Ready
           </button>
           <button
             onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}
-            className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20"
+            className="px-2.5 py-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded-md hover:bg-red-100"
           >
             Delete All
           </button>
@@ -1461,9 +1485,9 @@ export default function Home() {
           <div className="p-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredGrouped.map((group) => {
-                const { key, rows } = group;
+                const { key, rows, shared } = group;
                 const gStatus = groupStatus(rows.map((r) => r.status));
-                const rowErrors = getRowErrors(group.shared);
+                const rowErrors = getRowErrors(shared);
                 const hasErrors = rowErrors.length > 0;
                 const isGroupLocked = rows.every((r) => isLocked(r.status));
                 const existingDims = new Set(rows.map((r) => r.dimensions));
@@ -1479,6 +1503,7 @@ export default function Home() {
                     onToggleExpand={() => toggleExpand(key)}
                     onUpdateField={(field, value) => updateConceptField(key, field, value)}
                     onDelete={() => confirmDelete(rows.map((r) => r.id), shared.generatedAdName || "this concept")}
+                    onOpenDrawer={() => setDrawerItemId(shared.id)}
                     onAddSize={(dim) => addSizeMut.mutate({ conceptKey: key, dimensions: dim })}
                     addSizeOpen={addSizeOpen === key}
                     setAddSizeOpen={(v) => setAddSizeOpen(v ? key : null)}
@@ -1701,13 +1726,14 @@ export default function Home() {
                           {/* Feature 9: status checklist popover */}
                           {hasErrors && <StatusChecklist errors={rowErrors} />}
                         </td>
-                        {/* Feature 3: ad name with copy button */}
+                        {/* Feature 3: ad name with copy button — click to open drawer */}
                         <td className="px-3 py-1.5 max-w-[220px]">
                           <div className="flex items-center gap-1.5">
                             <span
-                              className="font-mono text-[10px] truncate block flex-1 min-w-0"
-                              title={shared.generatedAdName}
+                              className="font-mono text-[10px] truncate block flex-1 min-w-0 cursor-pointer hover:underline"
+                              title={shared.generatedAdName || "Click to open details"}
                               style={{ color: conceptLabel ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Mono', monospace" }}
+                              onClick={() => setDrawerItemId(shared.id)}
                             >
                               {conceptLabel || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>incomplete</span>}
                             </span>
@@ -1820,7 +1846,7 @@ export default function Home() {
                             {!isGroupLocked && (
                               <button
                                 onClick={() => confirmDelete(rows.map((r) => r.id), shared.generatedAdName || "this concept")}
-                                className="p-1 text-zinc-600 hover:text-red-400 transition-colors"
+                                className="p-1 text-zinc-600 hover:text-red-600 transition-colors"
                                 title="Delete all sizes"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1948,13 +1974,13 @@ export default function Home() {
                                             <div className="flex items-center gap-1">
                                               {sizeRow.status === "draft" && (
                                                 getRowErrors(sizeRow).length > 0 ? (
-                                                  <button disabled className="px-2 py-1 text-[10px] font-medium rounded bg-green-500/10 text-green-400 border border-green-500/20 cursor-not-allowed opacity-40">
+                                                  <button disabled className="px-2 py-1 text-[10px] font-medium rounded bg-green-50 text-green-700 border border-green-200 cursor-not-allowed opacity-40">
                                                     Ready
                                                   </button>
                                                 ) : (
                                                   <button
                                                     onClick={() => updateMut.mutate({ id: sizeRow.id, status: "ready" })}
-                                                    className="px-2 py-1 text-[10px] font-medium rounded bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20"
+                                                    className="px-2 py-1 text-[10px] font-medium rounded bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
                                                   >
                                                     Ready
                                                   </button>
@@ -1973,7 +1999,7 @@ export default function Home() {
                                               {!sizeLocked && (
                                                 <button
                                                   onClick={() => confirmDelete([sizeRow.id], `${sizeRow.dimensions} size`)}
-                                                  className="p-1 text-zinc-600 hover:text-red-400 transition-colors"
+                                                  className="p-1 text-zinc-600 hover:text-red-600 transition-colors"
                                                   title="Delete this size"
                                                 >
                                                   <Trash2 className="w-3 h-3" />
@@ -2026,14 +2052,14 @@ export default function Home() {
 
                               {/* MANUS stub payloads */}
                               {rows.map((sizeRow) => stubPayloads[sizeRow.id] && (
-                                <div key={sizeRow.id} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-2">
+                                <div key={sizeRow.id} className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
                                   <div className="flex items-center justify-between">
                                     <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">
                                       {sizeRow.dimensions} — MANUS not connected yet — ad payload ready:
                                     </p>
                                     <button
                                       onClick={() => navigator.clipboard.writeText(JSON.stringify(stubPayloads[sizeRow.id], null, 2))}
-                                      className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-500/20 text-blue-300 rounded hover:bg-blue-500/30"
+                                      className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
                                     >
                                       <Copy className="w-3 h-3" /> Copy
                                     </button>
@@ -2046,14 +2072,14 @@ export default function Home() {
 
                               {/* Uploading + uploaded + error status blocks */}
                               {rows.filter((r) => r.status === "uploading" && !stubPayloads[r.id]).map((r) => (
-                                <div key={r.id} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 flex items-center gap-2">
+                                <div key={r.id} className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-2">
                                   <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
-                                  <span className="text-[11px] text-blue-300">{r.dimensions} — Sending to MANUS…</span>
+                                  <span className="text-[11px] text-blue-600">{r.dimensions} — Sending to MANUS…</span>
                                 </div>
                               ))}
                               {rows.filter((r) => r.status === "uploaded" && r.metaAdId).map((r) => (
-                                <div key={r.id} className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center gap-2">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                                <div key={r.id} className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-green-700" />
                                   <span className="text-[11px] text-green-300">
                                     {r.dimensions} — Uploaded — Meta Ad ID:{" "}
                                     <a href={`https://business.facebook.com/adsmanager/manage/ads?act=${r.metaAdId}`} target="_blank" rel="noreferrer" className="underline hover:text-green-200">
@@ -2063,8 +2089,8 @@ export default function Home() {
                                 </div>
                               ))}
                               {rows.filter((r) => r.status === "error" && r.errorMessage).map((r) => (
-                                <div key={r.id} className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-center gap-2">
-                                  <X className="w-3.5 h-3.5 text-red-400" />
+                                <div key={r.id} className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                                  <X className="w-3.5 h-3.5 text-red-600" />
                                   <span className="text-[11px] text-red-300">{r.dimensions} — {r.errorMessage}</span>
                                 </div>
                               ))}
@@ -2151,6 +2177,34 @@ export default function Home() {
           }}
           onClose={() => setShowMergeDialog(false)}
           isLoading={mergeMut.isPending}
+        />
+      )}
+
+      {/* Detail Drawer */}
+      {drawerItem && (
+        <DetailDrawer
+          item={drawerItem}
+          fieldOptions={{
+            angle: angleOptions,
+            source: sourceOpts,
+            product: productOpts,
+            contentType: contentTypeOpts,
+            creativeType: creativeTypeOpts,
+            copySlug: copyOptions,
+            dimensions: [
+              { value: "9:16", label: "9:16 (story)" },
+              { value: "4:5", label: "4:5 (feed)" },
+              { value: "1:1", label: "1:1 (feed)" },
+              { value: "16:9", label: "16:9 (feed)" },
+            ],
+          }}
+          copyEntries={copyEntries as any}
+          onUpdate={(id, updates) => updateMut.mutate({ id, ...updates })}
+          onDelete={(id) => {
+            confirmDelete([id], "this ad");
+            setDrawerItemId(null);
+          }}
+          onClose={() => setDrawerItemId(null)}
         />
       )}
 
@@ -2300,7 +2354,7 @@ function AddAdDialog({
           <div className="flex items-center justify-between mb-1.5">
             <label className="block text-[11px]" style={{ color: "var(--text-secondary)" }}>Paste a link or filename to auto-parse fields</label>
             {parsed && (
-              <span className="text-[10px] font-medium text-green-400 flex items-center gap-1">
+              <span className="text-[10px] font-medium text-green-700 flex items-center gap-1">
                 ✓ Parsed
               </span>
             )}

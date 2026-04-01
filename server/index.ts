@@ -264,7 +264,8 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-const PORT = Number(process.env.PORT) || 3002;
+// In dev mode (NODE_ENV !== production), always use 3002 to avoid colliding with Vite on 5173
+const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3002) : 3002;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
