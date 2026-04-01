@@ -197,7 +197,7 @@ type CopyEntry = { id: number; copySlug: string; headline: string; bodyCopy: str
 const emptyCopyForm = { copySlug: "", headline: "", bodyCopy: "", product: "OIO", status: "active" as const };
 const copyStatusColors: Record<string, string> = {
   active: "bg-green-500/10 text-green-400 border-green-500/15",
-  draft: "bg-[#21262d] text-[#8b949e] border-[#30363d]",
+  draft: "bg-zinc-100 text-zinc-500 border-zinc-300",
   retired: "bg-red-500/10 text-red-400 border-red-500/15",
 };
 

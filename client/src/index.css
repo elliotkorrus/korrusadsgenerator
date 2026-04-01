@@ -12,13 +12,13 @@
   --brand: #0099C6;
   --brand-dim: #007a9e;
   --brand-muted: oklch(55% 0.08 220);
-  --surface-0: #0d1117;
-  --surface-1: #161b22;
-  --surface-2: #21262d;
-  --surface-3: #30363d;
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #484f58;
+  --surface-0: #f8f9fa;
+  --surface-1: #ffffff;
+  --surface-2: #f0f1f3;
+  --surface-3: #d8dce0;
+  --text-primary: #1a1d21;
+  --text-secondary: #5a6069;
+  --text-muted: #8b949e;
 }
 
 body {
@@ -35,13 +35,12 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--surface-1);
+  background: var(--surface-2);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--surface-3);
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #0099C620;
-  background: color-mix(in srgb, #0099C6 30%, #30363d);
+  background: color-mix(in srgb, #0099C6 30%, #d8dce0);
 }

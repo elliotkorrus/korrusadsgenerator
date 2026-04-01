@@ -871,7 +871,7 @@ export default function Home() {
   }, []);
 
   const statusColors: Record<string, string> = {
-    draft: "bg-[#21262d] text-[#8b949e] border border-[#30363d]",
+    draft: "bg-zinc-100 text-zinc-500 border border-zinc-300",
     ready: "bg-green-500/10 text-green-400 border border-green-500/15",
     uploading: "bg-blue-400/10 text-blue-300 border border-blue-400/15",
     uploaded: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15",
