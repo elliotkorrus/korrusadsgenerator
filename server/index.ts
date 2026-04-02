@@ -14,7 +14,7 @@ const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploa
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 
 // ── Simple password auth ─────────────────────────────────────────────────────
 const APP_PASSWORD = process.env.APP_PASSWORD;
