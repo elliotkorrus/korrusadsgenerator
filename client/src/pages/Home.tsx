@@ -743,13 +743,14 @@ export default function Home() {
         // Merge sticky defaults (only for fields not already detected)
         const fields: Record<string, string> = {
           brand: parsed.brand || activeDefaults.brand || "OIO",
+          handle: parsed.handle || activeDefaults.handle || "korruscircadian",
           initiative: parsed.initiative || activeDefaults.initiative || "",
-          variation: parsed.variation || activeDefaults.variation || "V1",
+          variation: parsed.variation || activeDefaults.variation || "v1",
           angle: parsed.angle || activeDefaults.angle || "",
           source: parsed.source || activeDefaults.source || "",
-          product: parsed.product || activeDefaults.product || "OIO",
+          product: parsed.product || activeDefaults.product || "BULB",
           contentType: parsed.contentType || activeDefaults.contentType || "IMG",
-          creativeType: parsed.creativeType || activeDefaults.creativeType || "ESTATIC",
+          creativeType: parsed.creativeType || activeDefaults.creativeType || "UGC",
           dimensions: parsed.dimensions || "",
           copySlug: parsed.copySlug || activeDefaults.copySlug || "",
           filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
@@ -778,7 +779,12 @@ export default function Home() {
           // Upload file
           const formData = new FormData();
           formData.append("file", row.file);
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+          const token = localStorage.getItem("app-token");
+          const uploadRes = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+            headers: token ? { "x-app-token": token } : {},
+          });
           const uploadData = await uploadRes.json();
           if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
 
