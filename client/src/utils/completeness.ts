@@ -10,7 +10,7 @@ export interface CompletenessResult {
 }
 
 const CRITICAL_FIELDS = ["angle", "source", "contentType", "dimensions", "date"] as const;
-const IMPORTANT_FIELDS = ["brand", "initiative", "variation", "product", "creativeType", "copySlug"] as const;
+const IMPORTANT_FIELDS = ["brand", "initiative", "variation", "product", "creativeType", "copySlug", "filename"] as const;
 
 export function computeCompleteness(item: Record<string, any>): CompletenessResult {
   let totalWeight = 0;

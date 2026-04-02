@@ -73,7 +73,14 @@ const FIELDS = [
     fixed: false,
   },
   {
-    position: 11, key: "date", label: "Date", example: "0402", color: "#71717a",
+    position: 11, key: "filename", label: "Filename", example: "korrus_ugc_curiosity", color: "#a3a3a3",
+    description: "Source filename without extension. Auto-parsed on drop for traceability.",
+    rules: ["Stripped of file extension (.png, .mp4, etc.)", "Stripped of dimension token — size is in Dims field", "Preserves original filename for traceability"],
+    options: [],
+    fixed: false,
+  },
+  {
+    position: 12, key: "date", label: "Date", example: "0402", color: "#71717a",
     description: "Date the creative was produced. Format: MMDD.",
     rules: ["MMDD format — 4 digits", "Auto-parsed from filename if present", "Defaults to current date on drop"],
     options: [],
@@ -84,7 +91,7 @@ const FIELDS = [
 const DEFAULT_VALUES: Record<string, string> = {
   handle: "korruscircadian", initiative: "s_004", variation: "v1", angle: "SocialProof",
   creativeType: "UGC", source: "NG", contentType: "VID", dimensions: "9x16",
-  copySlug: "C-BlueLight", product: "BULB", date: "0402",
+  copySlug: "C-BlueLight", product: "BULB", filename: "korrus_ugc_curiosity", date: "0402",
 };
 
 function CopyBtn({ text }: { text: string }) {
@@ -119,7 +126,7 @@ export default function NamingGuide() {
       <div className="flex-shrink-0 px-6 py-4" style={{ borderBottom: "1px solid var(--surface-3)" }}>
         <h2 className="font-semibold" style={{ fontSize: "15px", letterSpacing: "-0.01em", color: "var(--text-primary)" }}>Naming Guide</h2>
         <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
-          11-field ad naming convention: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date
+          12-field ad naming convention: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Filename__Date
         </p>
       </div>
 

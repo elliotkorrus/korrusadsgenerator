@@ -51,13 +51,14 @@ const FIELDS = [
   { position: 8, key: "dimensions", label: "Dims", example: "9x16", color: "#94a3b8", description: "Ad placement size. Auto-detected from pixel dimensions on drop.", rules: ["9x16 = Stories/Reels  ·  4x5 = portrait Feed", "1x1 = square Feed  ·  16x9 = landscape", "Colon → x in name (9:16 → 9x16)"], options: ["9x16", "4x5", "1x1", "16x9"], fixed: false },
   { position: 9, key: "copySlug", label: "Copy", example: "C-BlueLight", color: "#f472b6", description: "Specific ad copy variant. Links to a Copy Library entry.", rules: ["C- prefix followed by descriptor", "Must match a copy_slug in Copy Library", "Required before marking an ad Ready"], options: ["C-BlueLight", "C-TriedEveryBulb", "C-CircadianDisorder", "C-ReliableSetup", "C-SleepStruggles"], fixed: false },
   { position: 10, key: "product", label: "Product", example: "BULB", color: "#38bdf8", description: "Which product line this ad is for.", rules: ["BULB = OIO circadian bulb", "SPHERE = OIO Sphere"], options: ["BULB", "SPHERE"], fixed: false },
-  { position: 11, key: "date", label: "Date", example: "0402", color: "#71717a", description: "Date the creative was produced. Format: MMDD.", rules: ["MMDD format — 4 digits", "Auto-parsed from filename if present", "Defaults to current date on drop"], options: [], fixed: false },
+  { position: 11, key: "filename", label: "Filename", example: "korrus_ugc_curiosity", color: "#a3a3a3", description: "Source filename without extension. Auto-parsed on drop for traceability.", rules: ["Stripped of file extension (.png, .mp4, etc.)", "Stripped of dimension token — size is in Dims field", "Preserves original filename for traceability"], options: [], fixed: false },
+  { position: 12, key: "date", label: "Date", example: "0402", color: "#71717a", description: "Date the creative was produced. Format: MMDD.", rules: ["MMDD format — 4 digits", "Auto-parsed from filename if present", "Defaults to current date on drop"], options: [], fixed: false },
 ];
 
 const DEFAULT_VALUES: Record<string, string> = {
   handle: "korruscircadian", initiative: "s_004", variation: "v1", angle: "SocialProof",
   creativeType: "UGC", source: "NG", contentType: "VID", dimensions: "9x16",
-  copySlug: "C-BlueLight", product: "BULB", date: "0402",
+  copySlug: "C-BlueLight", product: "BULB", filename: "korrus_ugc_curiosity", date: "0402",
 };
 
 function CopyBtn({ text }: { text: string }) {

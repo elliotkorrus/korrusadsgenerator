@@ -1,5 +1,5 @@
 // Core business logic: ad naming convention
-// Structure: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date
+// Structure: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Filename__Date
 
 export interface AdNameFields {
   handle: string;
@@ -18,7 +18,7 @@ export interface AdNameFields {
   filename: string;
 }
 
-/** Build the ad name: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date */
+/** Build the ad name: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Filename__Date */
 export function generateAdName(fields: AdNameFields): string {
   const dims = fields.dimensions.replace(":", "x"); // 9:16 → 9x16
   return [
@@ -32,6 +32,7 @@ export function generateAdName(fields: AdNameFields): string {
     dims,
     fields.copySlug,
     fields.product,
+    fields.filename,
     fields.date,
   ].filter(Boolean).join("__");
 }
