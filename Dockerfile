@@ -20,5 +20,5 @@ RUN mkdir -p /app/data /app/uploads
 
 EXPOSE 3002
 
-# Push DB schema then start server
-CMD ["sh", "-c", "npm run db:push && npm run start"]
+# Push DB schema, seed data, then start server
+CMD ["sh", "-c", "npm run db:push && npm run db:seed && npm run start"]
