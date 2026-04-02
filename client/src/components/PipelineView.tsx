@@ -144,16 +144,6 @@ const STATUS_DOT_COLORS: Record<Status, string> = {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Deterministic hash-based hue from a string. */
-function agencyColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = ((hash % 360) + 360) % 360;
-  return `oklch(70% 0.14 ${hue})`;
-}
-
 /** Derive a single aggregate status for a group. */
 function groupStatus(rows: Row[]): Status {
   if (rows.some((r) => r.status === "error")) return "error";
@@ -363,21 +353,6 @@ function PipelineCard({
         }
       }}
     >
-      {/* Agency left accent */}
-      {primaryRow.agency && (
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 3,
-            borderRadius: "6px 0 0 6px",
-            background: agencyColor(primaryRow.agency),
-          }}
-        />
-      )}
-
       <div style={{ display: "flex", gap: 8 }}>
         <Thumbnail row={primaryRow} />
 
@@ -401,9 +376,6 @@ function PipelineCard({
 
           {/* Pills */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 6 }}>
-            {primaryRow.agency && (
-              <Pill label={primaryRow.agency} color={agencyColor(primaryRow.agency)} />
-            )}
             {primaryRow.angle && <Pill label={primaryRow.angle} />}
             {primaryRow.source && <Pill label={primaryRow.source} />}
           </div>

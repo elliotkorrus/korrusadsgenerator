@@ -602,6 +602,9 @@ export default function Home() {
   // CSV import dialog
   const [showCSVImport, setShowCSVImport] = useState(false);
 
+  // Producer filter (was "producerFilter")
+  const [producerFilter, setProducerFilter] = useState("");
+
   // Detail drawer
   const [drawerItemId, setDrawerItemId] = useState<number | null>(null);
 
@@ -867,10 +870,10 @@ export default function Home() {
   const filteredGrouped = useMemo(() => {
     let result = grouped;
     // Producer filter
-    if (agencyFilter) {
+    if (producerFilter) {
       result = result.filter(({ shared }) => {
-        if (agencyFilter === "__untagged__") return !shared.source;
-        return shared.source === agencyFilter;
+        if (producerFilter === "__untagged__") return !shared.source;
+        return shared.source === producerFilter;
       });
     }
     // Text search
@@ -881,14 +884,13 @@ export default function Home() {
           shared.brand, shared.initiative, shared.angle, shared.source,
           shared.product, shared.contentType, shared.creativeType, shared.copySlug,
           shared.filename, shared.date, shared.generatedAdName, shared.handle ?? "",
-          shared.agency ?? "",
           ...rows.map((r) => r.dimensions),
         ];
         return fields.some((f) => f?.toLowerCase().includes(q));
       });
     }
     return result;
-  }, [grouped, searchText, agencyFilter]);
+  }, [grouped, searchText, producerFilter]);
 
   // All row IDs in the current view (for select-all)
   const allKeys = useMemo(() => filteredGrouped.map((g) => g.key), [filteredGrouped]);
@@ -975,6 +977,35 @@ export default function Home() {
         s.delete(id);
         return s;
       });
+      utils.queue.list.invalidate();
+    }
+  }
+
+  // Batch send to Meta — sends selected or all ready ads
+  const [batchSending, setBatchSending] = useState(false);
+  async function sendBatchToMeta(ids?: number[]) {
+    setBatchSending(true);
+    try {
+      const metaToken = localStorage.getItem("app-token");
+      const res = await fetch("/api/send-to-meta-batch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(metaToken ? { "x-app-token": metaToken } : {}),
+        },
+        body: JSON.stringify({ adIds: ids || [] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Batch send failed: ${data.error || res.statusText}`);
+      } else {
+        const { meta } = data;
+        if (meta) {
+          alert(`Upload complete: ${meta.success} succeeded, ${meta.failed} failed out of ${meta.total} concept groups.`);
+        }
+      }
+    } finally {
+      setBatchSending(false);
       utils.queue.list.invalidate();
     }
   }
@@ -1081,7 +1112,7 @@ export default function Home() {
     setBatchEditValue("");
   }
 
-  const COL_COUNT = 20;
+  const COL_COUNT = 21;
 
   // Get select options for currently-selected batch edit field
   const batchEditFieldMeta = BATCH_EDITABLE_FIELDS.find((f) => f.key === batchEditField);
@@ -1406,10 +1437,10 @@ export default function Home() {
           if (producers.length === 0) return null;
           return (
             <select
-              value={agencyFilter}
-              onChange={(e) => setAgencyFilter(e.target.value)}
+              value={producerFilter}
+              onChange={(e) => setProducerFilter(e.target.value)}
               className="text-[11px] px-2 py-1.5 rounded-md focus:outline-none"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: agencyFilter ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+              style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: producerFilter ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Sans', sans-serif" }}
             >
               <option value="">All producers</option>
               {producers.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -1417,6 +1448,25 @@ export default function Home() {
             </select>
           );
         })()}
+        {/* Send All Ready to Meta — visible on Queue view */}
+        {focusView === "queue" && (
+          <button
+            onClick={() => sendBatchToMeta()}
+            disabled={batchSending || (viewCounts.queue || 0) === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors"
+            style={{
+              background: batchSending ? "#007a9e" : "#0099C6",
+              color: "white",
+              opacity: batchSending || (viewCounts.queue || 0) === 0 ? 0.6 : 1,
+              cursor: batchSending ? "wait" : "pointer",
+            }}
+            onMouseEnter={(e) => { if (!batchSending) (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
+            onMouseLeave={(e) => { if (!batchSending) (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
+          >
+            <CloudUpload className="w-3.5 h-3.5" />
+            {batchSending ? "Uploading…" : "Send All Ready to Meta"}
+          </button>
+        )}
       </div>
 
       {/* Bulk actions bar */}
@@ -1429,6 +1479,20 @@ export default function Home() {
             className="px-2.5 py-1 text-xs bg-green-500/10 text-green-400 border border-green-500/20 rounded-md hover:bg-green-500/20"
           >
             ✓ Mark Ready
+          </button>
+          <button
+            onClick={() => sendBatchToMeta(selectedIds)}
+            disabled={batchSending || !selectedIds.some(id => allItems.find(i => i.id === id)?.status === "ready")}
+            className="px-2.5 py-1 text-xs rounded-md transition-colors"
+            style={{
+              background: "rgba(0,153,198,0.1)",
+              color: "#0099C6",
+              border: "1px solid rgba(0,153,198,0.3)",
+              opacity: batchSending ? 0.6 : 1,
+              cursor: batchSending ? "wait" : "pointer",
+            }}
+          >
+            {batchSending ? "Uploading…" : "Send to Meta"}
           </button>
           <button
             onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}
@@ -1882,8 +1946,8 @@ export default function Home() {
                             })()}
                           </div>
                         </td>
-                        {/* Ad Set */}
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.adSetName || ""} onSave={(v) => updateConceptField(key, "adSetName", v)} disabled={isGroupLocked} placeholder="Ad set" /></td>
+                        {/* Ad Set (shows adSetId — the numeric Meta ID needed for upload) */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.adSetId || ""} onSave={(v) => updateConceptField(key, "adSetId", v)} disabled={isGroupLocked} mono placeholder="120..." /></td>
                         {/* Dest URL */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
                         {/* CTA */}

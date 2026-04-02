@@ -41,7 +41,6 @@ const MAPPABLE_FIELDS = [
   { key: "handle", label: "Handle" },
   { key: "cta", label: "CTA" },
   { key: "displayUrl", label: "Display URL" },
-  { key: "agency", label: "Agency / Partner" },
   { key: "fileUrl", label: "File URL" },
 ] as const;
 
@@ -172,8 +171,6 @@ const HEADER_ALIASES: Record<string, MappableKey> = {
   "call to action": "cta",
   "display url": "displayUrl",
   displayurl: "displayUrl",
-  agency: "agency",
-  partner: "agency",
   "file url": "fileUrl",
   fileurl: "fileUrl",
   "asset url": "fileUrl",
@@ -470,7 +467,7 @@ export default function CSVImportDialog({ onImport, onClose }: CSVImportDialogPr
           handle: row.handle || null,
           cta: row.cta || null,
           displayUrl: row.displayUrl || null,
-          agency: row.agency || null,
+          agency: null,
           fileUrl: row.fileUrl || null,
           conceptKey,
         });

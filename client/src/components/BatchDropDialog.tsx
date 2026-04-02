@@ -187,7 +187,7 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
   const visibleColumns = showAllFields ? ALL_FIELD_COLUMNS : ESSENTIAL_FIELD_COLUMNS;
 
   // Bulk defaults — apply to ALL rows
-  const [bulkDefaults, setBulkDefaults] = useState<Partial<AdNameFields> & { handle?: string; agency?: string }>({
+  const [bulkDefaults, setBulkDefaults] = useState<Partial<AdNameFields> & { handle?: string }>({
     brand: "OIO",
     initiative: "",
     variation: "V1",
@@ -199,7 +199,6 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
     dimensions: "",
     copySlug: "",
     date: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })(),
-    agency: "",
   });
 
   const { data: existingItems = [] } = trpc.queue.list.useQuery(undefined);
@@ -313,7 +312,7 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
           cta: metaDefaults?.defaultCta || "SHOP_NOW",
           displayUrl: metaDefaults?.defaultDisplayUrl || null,
           destinationUrl: metaDefaults?.defaultDestinationUrl || null,
-          agency: bulkDefaults.agency || null,
+          agency: null,
           conceptKey,
         });
 

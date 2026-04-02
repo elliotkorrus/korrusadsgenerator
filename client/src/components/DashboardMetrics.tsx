@@ -19,7 +19,7 @@ interface DashboardMetricsProps {
 const STORY_DIMS = ["9:16"];
 const FEED_DIMS = ["4:5", "1:1", "16:9"];
 
-const AGENCY_PALETTE = [
+const PRODUCER_PALETTE = [
   "#60A7C8",
   "#a78bfa",
   "#f472b6",
@@ -32,12 +32,12 @@ const AGENCY_PALETTE = [
   "#4ade80",
 ];
 
-function agencyColor(name: string): string {
+function producerColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return AGENCY_PALETTE[Math.abs(hash) % AGENCY_PALETTE.length];
+  return PRODUCER_PALETTE[Math.abs(hash) % PRODUCER_PALETTE.length];
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -282,7 +282,7 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
                 metrics.maxProducerCount > 0
                   ? (count / metrics.maxProducerCount) * 100
                   : 0;
-              const color = agencyColor(name);
+              const color = producerColor(name);
               return (
                 <div
                   key={name}
