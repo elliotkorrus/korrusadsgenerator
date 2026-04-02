@@ -41,25 +41,23 @@ function StatusBadge({ status, colors }: { status: string; colors: Record<string
 // ─── Tab: Guide ───────────────────────────────────────────────────────────────
 
 const FIELDS = [
-  { position: 1, key: "brand", label: "Brand", example: "OIO", color: "#60A7C8", description: "Always OIO. The ad-facing product brand.", rules: ["Always OIO — never KORRUS or anything else", "KORRUS is the company; OIO is the brand consumers see"], options: ["OIO"], fixed: true },
+  { position: 1, key: "handle", label: "Handle", example: "korruscircadian", color: "#60A7C8", description: "The Instagram handle. Always korruscircadian.", rules: ["Always korruscircadian", "First field in the ad name"], options: ["korruscircadian"], fixed: true },
   { position: 2, key: "initiative", label: "Initiative", example: "s_004", color: "#a78bfa", description: "Sprint or campaign bucket. Format: letter + underscore + zero-padded number.", rules: ["s = sprint  ·  q = quarterly  ·  e = evergreen", "Increment per new campaign sprint"], options: [], fixed: false },
-  { position: 3, key: "variation", label: "Variation", example: "v1", color: "#34d399", description: "Creative variant within the same concept.", rules: ["v + number: v1, v2, v3…", "Same angle + copy = same variation number", "New creative direction → new variation number"], options: ["v1", "v2", "v3", "v4", "v5"], fixed: false },
-  { position: 4, key: "angle", label: "Angle", example: "RedditQ&A", color: "#f59e0b", description: "Marketing angle or hook. Comes from Creative Labels.", rules: ["No spaces — CamelCase or hyphens", "Must match a Creative Label entry", "Describes the emotional/logical hook, not the format"], options: ["RedditQ&A", "SocialProof", "ProblemAgitate", "EducationFirst", "BeforeAfter"], fixed: false },
-  { position: 5, key: "source", label: "Source", example: "NG", color: "#fb923c", description: "Traffic source or creative origin.", rules: ["NG = No Growth  ·  PAID = paid media", "UGC = creator  ·  STUDIO = in-house", "STOCK = stock  ·  AI = AI-generated"], options: ["NG", "PAID", "UGC", "STUDIO", "STOCK", "AI"], fixed: false },
-  { position: 6, key: "product", label: "Product", example: "OIO", color: "#38bdf8", description: "Product line this ad is for.", rules: ["OIO = OIO circadian bulb", "SERUM = future product line"], options: ["OIO", "SERUM"], fixed: false },
-  { position: 7, key: "contentType", label: "Format", example: "IMG", color: "#e879f9", description: "File format of the creative asset.", rules: ["IMG = image  ·  VID = video", "GIF = animated  ·  CAR = carousel"], options: ["IMG", "VID", "GIF", "CAR"], fixed: false },
-  { position: 8, key: "creativeType", label: "Type", example: "ESTATIC", color: "#4ade80", description: "Creative execution style.", rules: ["ESTATIC = elevated static  ·  UGC = creator style", "MEME  ·  GFX = motion  ·  MASHUP  ·  TESTI  ·  AI"], options: ["ESTATIC", "UGC", "MEME", "GFX", "MASHUP", "TESTI", "AI"], fixed: false },
-  { position: 9, key: "dimensions", label: "Dims", example: "1x1", color: "#94a3b8", description: "Ad placement size. Auto-detected from pixel dimensions on drop.", rules: ["9x16 = Stories/Reels  ·  1x1 = square Feed", "4x5 = portrait Feed  ·  16x9 = landscape", "Colon → x in name (9:16 → 9x16)"], options: ["9x16", "1x1", "4x5", "16x9"], fixed: false },
-  { position: 10, key: "copySlug", label: "Copy", example: "RQA-SleepStruggles", color: "#f472b6", description: "Specific ad copy variant. Links to a Copy Library entry.", rules: ["Must match a copy_slug in Copy Library", "Format: ANGLE-Descriptor (hyphens, no spaces)", "Required before marking an ad Ready"], options: ["RQA-SleepStruggles", "RQA-ReliableSetup", "RQA-CircadianDisorder"], fixed: false },
-  { position: 11, key: "filename", label: "Filename", example: "korrus_s_004_1_RedditQ&A_ng_2026-03", color: "#a3a3a3", description: "Source filename — stored for traceability but excluded from the ad name.", rules: ["Not included in the generated ad name", "Stored in the DB so you can trace back to the original agency file", "Auto-parsed on drop — no manual entry needed"], options: [], fixed: true },
-  { position: 12, key: "date", label: "Date", example: "2026-03", color: "#71717a", description: "Month the creative was produced (YYYY-MM).", rules: ["YYYY-MM — no day", "Auto-parsed from filename  ·  defaults to current month"], options: [], fixed: false },
+  { position: 3, key: "variation", label: "Variation", example: "v1", color: "#34d399", description: "Creative variant within the same concept.", rules: ["v + number: v1, v2, v3…", "Same theme + copy = same variation number", "New creative direction → new variation number"], options: ["v1", "v2", "v3", "v4", "v5"], fixed: false },
+  { position: 4, key: "angle", label: "Theme", example: "SocialProof", color: "#f59e0b", description: "The marketing angle or hook. 13 predefined themes.", rules: ["CamelCase, no spaces", "Must match a predefined theme", "Describes the emotional/logical hook, not the format"], options: ["BeforeAfter", "Curiosity", "Education", "FeaturesBenefits", "Founder", "Lifestyle", "MediaPress", "MythBusting", "ProblemSolution", "Promotion", "SocialProof", "Unboxing", "UsVsThem"], fixed: false },
+  { position: 5, key: "creativeType", label: "Creative Style", example: "UGC", color: "#4ade80", description: "Creative execution style.", rules: ["UGC = user-generated content  ·  HIFI = high fidelity", "LOFI = low fidelity  ·  GFX = motion graphics", "MASHUP  ·  MEME  ·  SCREEN  ·  PHOTO  ·  AI  ·  DEMO"], options: ["UGC", "HIFI", "LOFI", "GFX", "MASHUP", "MEME", "SCREEN", "PHOTO", "AI", "DEMO"], fixed: false },
+  { position: 6, key: "source", label: "Producer", example: "NG", color: "#fb923c", description: "Who produced the creative asset.", rules: ["NG = No Growth  ·  SCL = Scalable Media", "RED = Real Eyes Media  ·  IHO = In-House Organic", "IHP = In-House Paid  ·  WL = Whitelisting"], options: ["NG", "SCL", "RED", "IHO", "IHP", "WL"], fixed: false },
+  { position: 7, key: "contentType", label: "Ad Format", example: "VID", color: "#e879f9", description: "File format of the creative asset.", rules: ["IMG = static image (JPG, PNG, WEBP)", "VID = video (MP4, MOV)", "CAR = carousel (multi-image)"], options: ["IMG", "VID", "CAR"], fixed: false },
+  { position: 8, key: "dimensions", label: "Dims", example: "9x16", color: "#94a3b8", description: "Ad placement size. Auto-detected from pixel dimensions on drop.", rules: ["9x16 = Stories/Reels  ·  4x5 = portrait Feed", "1x1 = square Feed  ·  16x9 = landscape", "Colon → x in name (9:16 → 9x16)"], options: ["9x16", "4x5", "1x1", "16x9"], fixed: false },
+  { position: 9, key: "copySlug", label: "Copy", example: "C-BlueLight", color: "#f472b6", description: "Specific ad copy variant. Links to a Copy Library entry.", rules: ["C- prefix followed by descriptor", "Must match a copy_slug in Copy Library", "Required before marking an ad Ready"], options: ["C-BlueLight", "C-TriedEveryBulb", "C-CircadianDisorder", "C-ReliableSetup", "C-SleepStruggles"], fixed: false },
+  { position: 10, key: "product", label: "Product", example: "BULB", color: "#38bdf8", description: "Which product line this ad is for.", rules: ["BULB = OIO circadian bulb", "SPHERE = OIO Sphere"], options: ["BULB", "SPHERE"], fixed: false },
+  { position: 11, key: "date", label: "Date", example: "0402", color: "#71717a", description: "Date the creative was produced. Format: MMDD.", rules: ["MMDD format — 4 digits", "Auto-parsed from filename if present", "Defaults to current date on drop"], options: [], fixed: false },
 ];
 
 const DEFAULT_VALUES: Record<string, string> = {
-  brand: "OIO", initiative: "s_004", variation: "v1", angle: "RedditQ&A",
-  source: "NG", product: "OIO", contentType: "IMG", creativeType: "ESTATIC",
-  dimensions: "1x1", copySlug: "RQA-SleepStruggles",
-  filename: "korrus_s_004_1_RedditQ&A_ng_2026-03", date: "2026-03",
+  handle: "korruscircadian", initiative: "s_004", variation: "v1", angle: "SocialProof",
+  creativeType: "UGC", source: "NG", contentType: "VID", dimensions: "9x16",
+  copySlug: "C-BlueLight", product: "BULB", date: "0402",
 };
 
 function CopyBtn({ text }: { text: string }) {
@@ -85,7 +83,7 @@ function GuideTab() {
 
   // Build dynamic options per field — falls back to the static list if DB is empty
   const dynamicOptions: Record<string, string[]> = {
-    angle: angles.filter((a) => a.status === "active").map((a) => a.angleSlug),
+    angle: fieldOpts.filter((o) => o.field === "angle" && o.isActive).map((o) => o.value),
     copySlug: copyEntries.filter((c) => c.status === "active").map((c) => c.copySlug),
     source: fieldOpts.filter((o) => o.field === "source" && o.isActive).map((o) => o.value),
     product: fieldOpts.filter((o) => o.field === "product" && o.isActive).map((o) => o.value),
@@ -99,8 +97,8 @@ function GuideTab() {
     return live && live.length > 0 ? live : f.options;
   }
 
-  // Ad name preview — exclude filename, skip empty fields (matches generateAdName behaviour)
-  const adName = FIELDS.filter((f) => f.key !== "filename").map((f) => values[f.key] ?? "").filter(Boolean).join("__");
+  // Ad name preview — skip empty fields (matches generateAdName behaviour)
+  const adName = FIELDS.map((f) => values[f.key] ?? "").filter(Boolean).join("__");
 
   return (
     <div className="space-y-5">
@@ -218,7 +216,7 @@ function CopyTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Headline and body copy variants — linked to the Copy field (position 10) in the ad name</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Headline and body copy variants — linked to the Copy field (position 9) in the ad name</p>
         <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-white text-[11px] font-semibold rounded-md"
           style={{ background: "#0099C6" }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
@@ -285,7 +283,7 @@ function CopyTab() {
                 <select value={form.product} onChange={(e) => setForm({ ...form, product: e.target.value })} className="w-full px-3 py-2 text-sm focus:outline-none rounded-sm" style={inputStyle}
                   onFocus={(e) => { (e.target as HTMLSelectElement).style.borderColor = "rgba(0,153,198,0.6)"; }}
                   onBlur={(e) => { (e.target as HTMLSelectElement).style.borderColor = "var(--surface-3)"; }}>
-                  <option value="OIO">OIO</option><option value="SERUM">SERUM</option>
+                  <option value="OIO">OIO</option><option value="BULB">BULB</option><option value="SPHERE">SPHERE</option>
                 </select>
               </div>
               <div className="flex-1">
@@ -352,7 +350,7 @@ function LabelsTab() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Creative types — linked to the Angle field (position 4) in the ad name</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Themes — linked to the Theme field (position 4) in the ad name</p>
         <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-white text-[11px] font-semibold rounded-md" style={{ background: "#0099C6" }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}>
@@ -401,8 +399,8 @@ function LabelsTab() {
       <div className="mt-6">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>Creative Format</h3>
-            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>Execution format — position 8 in the ad name (e.g. ESTATIC, UGC, MEME)</p>
+            <h3 className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>Creative Style</h3>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>Execution style — position 5 in the ad name (e.g. UGC, HIFI, LOFI, GFX)</p>
           </div>
         </div>
         <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--surface-3)" }}>
@@ -521,9 +519,9 @@ function LabelsTab() {
 // ─── Tab: Field Options ───────────────────────────────────────────────────────
 
 const FIELD_GROUPS = [
-  { field: "source", label: "Source", description: "Traffic source or creative origin" },
+  { field: "source", label: "Producer", description: "Who produced the creative asset" },
   { field: "product", label: "Product", description: "Product line this ad promotes" },
-  { field: "contentType", label: "Format", description: "File type of the creative asset" },
+  { field: "contentType", label: "Ad Format", description: "File type of the creative asset (IMG, VID, CAR)" },
 ];
 
 const UPLOAD_DEFAULTS_GROUPS = [
