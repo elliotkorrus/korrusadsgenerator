@@ -3,12 +3,15 @@ import { useSearchParams } from "react-router-dom";
 import { trpc } from "../lib/trpc";
 import { useFieldOptions } from "../hooks/useFieldOptions";
 import { InlineText, InlineSelect } from "../components/InlineEditCell";
-import BatchDropDialog, { ParsedRow } from "../components/BatchDropDialog";
 import MergeDialog from "../components/MergeDialog";
 import PipelineView from "../components/PipelineView";
 import DashboardMetrics from "../components/DashboardMetrics";
 import CSVImportDialog from "../components/CSVImportDialog";
 import DetailDrawer from "../components/DetailDrawer";
+import SpreadsheetInbox, { PendingRow } from "../components/spreadsheet/SpreadsheetInbox";
+import StickyDefaultsBar from "../components/StickyDefaultsBar";
+import { useStickyDefaults } from "../hooks/useStickyDefaults";
+import { groupFilesByBaseName } from "../utils/autoGroup";
 import {
   generateAdName,
   parseFilenameToFields,
@@ -44,7 +47,7 @@ const FOCUS_VIEWS = [
 ] as const;
 
 const FOCUS_VIEW_EMPTY: Record<string, { icon: string; title: string; message: string }> = {
-  inbox: { icon: "tray", title: "No new creatives", message: "Drag files or import a CSV to get started." },
+  inbox: { icon: "tray", title: "Drop creatives here", message: "Drag and drop files anywhere on this page. They'll appear instantly in the spreadsheet." },
   queue: { icon: "send", title: "Nothing queued", message: "Mark drafts as Ready in the Inbox to move them here." },
   live: { icon: "globe", title: "No ads uploaded yet", message: "Send ready creatives from the Queue." },
 };
@@ -581,8 +584,11 @@ export default function Home() {
   const [addSizeOpen, setAddSizeOpen] = useState<string | null>(null);
   // Drag-and-drop state
   const [dragOver, setDragOver] = useState(false);
-  const [batchDropFiles, setBatchDropFiles] = useState<File[] | null>(null);
   const dragCounterRef = useRef(0);
+
+  // Pending uploads (zero-friction drop)
+  const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
+  const stickyDefaults = useStickyDefaults();
 
   // Feature 2: view mode
   const [viewMode, setViewMode] = useState<"table" | "card" | "pipeline">(() => {
@@ -704,6 +710,118 @@ export default function Home() {
       utils.queue.list.invalidate();
     },
   });
+  const createMut = trpc.queue.create.useMutation({
+    onSuccess: () => {
+      utils.queue.list.invalidate();
+    },
+  });
+
+  // Zero-friction file drop → instant ingest
+  async function handleFileDrop(files: File[]) {
+    const activeDefaults = stickyDefaults.getActiveDefaults();
+    const groups = groupFilesByBaseName(files);
+    const batchId = crypto.randomUUID();
+
+    const newPending: PendingRow[] = [];
+    for (const [baseName, groupFiles] of groups) {
+      const groupKey = `${batchId}__${baseName}`;
+      for (const file of groupFiles) {
+        const parsed = parseFilenameToFields(file.name);
+        // Content type from MIME
+        if (!parsed.contentType) {
+          if (file.type.startsWith("video/")) parsed.contentType = "VID";
+          else if (file.type.startsWith("image/")) parsed.contentType = "IMG";
+          else if (file.type === "image/gif") parsed.contentType = "GIF";
+        }
+        // Detect image dimensions
+        if (file.type.startsWith("image/") && !parsed.dimensions) {
+          try {
+            const dims = await detectImageDims(file);
+            if (dims) parsed.dimensions = dims;
+          } catch { /* ignore */ }
+        }
+        // Merge sticky defaults (only for fields not already detected)
+        const fields: Record<string, string> = {
+          brand: parsed.brand || activeDefaults.brand || "OIO",
+          initiative: parsed.initiative || activeDefaults.initiative || "",
+          variation: parsed.variation || activeDefaults.variation || "V1",
+          angle: parsed.angle || activeDefaults.angle || "",
+          source: parsed.source || activeDefaults.source || "",
+          product: parsed.product || activeDefaults.product || "OIO",
+          contentType: parsed.contentType || activeDefaults.contentType || "IMG",
+          creativeType: parsed.creativeType || activeDefaults.creativeType || "ESTATIC",
+          dimensions: parsed.dimensions || "",
+          copySlug: parsed.copySlug || activeDefaults.copySlug || "",
+          filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
+          date: parsed.date || activeDefaults.date || getCurrentYearMonth(),
+        };
+        if (activeDefaults.agency) fields.agency = activeDefaults.agency;
+
+        newPending.push({
+          tempId: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+          fields,
+          uploadState: "queued",
+          conceptGroupKey: groupKey,
+        });
+      }
+    }
+
+    setPendingRows((prev) => [...prev, ...newPending]);
+
+    // Upload each file in background, create DB row, then remove from pending
+    for (const row of newPending) {
+      (async () => {
+        setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading" } : r));
+        try {
+          // Upload file
+          const formData = new FormData();
+          formData.append("file", row.file);
+          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
+
+          // Create queue entry
+          await createMut.mutateAsync({
+            ...row.fields,
+            fileUrl: uploadData.fileUrl,
+            conceptKey: [
+              row.fields.brand, row.fields.initiative, row.fields.variation,
+              row.fields.angle, row.fields.source, row.fields.product,
+              row.fields.contentType, row.fields.creativeType,
+              row.fields.copySlug, row.fields.filename, row.fields.date,
+            ].join("__"),
+          } as any);
+
+          // Remove from pending
+          setPendingRows((prev) => prev.filter((r) => r.tempId !== row.tempId));
+        } catch (err) {
+          console.error("Upload failed:", err);
+          setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "error" } : r));
+        }
+      })();
+    }
+  }
+
+  // Detect image dimensions via canvas
+  function detectImageDims(file: File): Promise<string | null> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const ratio = img.width / img.height;
+        if (Math.abs(ratio - 9 / 16) < 0.08) resolve("9:16");
+        else if (Math.abs(ratio - 4 / 5) < 0.08) resolve("4:5");
+        else if (Math.abs(ratio - 1) < 0.08) resolve("1:1");
+        else if (Math.abs(ratio - 16 / 9) < 0.08) resolve("16:9");
+        else resolve(null);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }
 
   const angleOptions = useMemo(
     () => angles.filter((a) => a.status === "active").map((a) => ({ value: a.angleSlug, label: a.angleSlug })),
@@ -891,9 +1009,12 @@ export default function Home() {
       f.type.startsWith("image/") || f.type.startsWith("video/")
     );
     if (droppedFiles.length > 0) {
-      setBatchDropFiles(droppedFiles);
+      // Zero-friction: no dialog, files go straight to inbox
+      setFocusView("inbox");
+      if (viewMode !== "table") setViewMode("table");
+      handleFileDrop(droppedFiles);
     }
-  }, []);
+  }, [stickyDefaults, viewMode]);
 
   const statusColors: Record<string, string> = {
     draft: "bg-zinc-800/50 text-zinc-400 border border-zinc-700",
@@ -1162,74 +1283,17 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Feature 5: Batch defaults panel */}
+      {/* Sticky defaults bar */}
       {showBatchDefaults && (
-        <div
-          className="flex-shrink-0 px-5 py-3 flex items-center gap-3 flex-wrap"
-          style={{ borderBottom: "1px solid var(--surface-3)", background: "rgba(0,153,198,0.04)" }}
-        >
-          <span className="text-[11px] font-semibold" style={{ color: "#60A7C8", minWidth: "fit-content" }}>Batch Defaults</span>
-          {[
-            { label: "Brand", key: "brand" as const, type: "text" },
-            { label: "Initiative", key: "initiative" as const, type: "text" },
-            { label: "Date (YYYY-MM)", key: "date" as const, type: "text" },
-          ].map(({ label, key }) => (
-            <div key={key} className="flex items-center gap-1.5">
-              <label className="text-[10px]" style={{ color: "var(--text-muted)" }}>{label}</label>
-              <input
-                type="text"
-                value={batchDefaults[key]}
-                onChange={(e) => setBatchDefaults((p) => ({ ...p, [key]: e.target.value }))}
-                className="px-2 py-1 rounded-sm text-[11px] focus:outline-none"
-                style={{
-                  background: "var(--surface-1)",
-                  border: "1px solid var(--surface-3)",
-                  color: "var(--text-primary)",
-                  width: "90px",
-                  fontFamily: "'IBM Plex Sans', sans-serif",
-                }}
-              />
-            </div>
-          ))}
-          {[
-            { label: "Source", key: "source" as const, opts: sourceOpts },
-            { label: "Product", key: "product" as const, opts: productOpts },
-          ].map(({ label, key, opts }) => (
-            <div key={key} className="flex items-center gap-1.5">
-              <label className="text-[10px]" style={{ color: "var(--text-muted)" }}>{label}</label>
-              <select
-                value={batchDefaults[key]}
-                onChange={(e) => setBatchDefaults((p) => ({ ...p, [key]: e.target.value }))}
-                className="px-2 py-1 rounded-sm text-[11px] focus:outline-none"
-                style={{
-                  background: "var(--surface-1)",
-                  border: "1px solid var(--surface-3)",
-                  color: "var(--text-primary)",
-                  fontFamily: "'IBM Plex Sans', sans-serif",
-                }}
-              >
-                <option value="">—</option>
-                {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-          ))}
-          <button
-            onClick={applyBatchDefaults}
-            className="px-3 py-1.5 text-[11px] font-medium rounded-md transition-colors"
-            style={{ background: "#0099C6", color: "white", border: "none", cursor: "pointer" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
-          >
-            Apply to all drafts
-          </button>
-          <button
-            onClick={() => setBatchDefaults({ brand: "OIO", initiative: "", source: "", product: "", date: getCurrentYearMonth() })}
-            className="text-[11px] transition-colors"
-            style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer" }}
-          >
-            Reset
-          </button>
-        </div>
+        <StickyDefaultsBar
+          defaults={stickyDefaults.defaults}
+          onSetDefault={stickyDefaults.setDefault}
+          onToggleDefault={stickyDefaults.toggleDefault}
+          onReset={stickyDefaults.reset}
+          fieldOptions={{ source: sourceOpts, product: productOpts, contentType: contentTypeOpts, creativeType: creativeTypeOpts }}
+          angleOptions={angleOptions}
+          copyOptions={copyOptions}
+        />
       )}
 
       {/* Dashboard Metrics */}
@@ -1538,8 +1602,26 @@ export default function Home() {
           />
         )}
 
-        {/* Table view */}
-        {viewMode === "table" && filteredGrouped.length > 0 && (
+        {/* Spreadsheet view (inbox) */}
+        {viewMode === "table" && focusView === "inbox" && (filteredGrouped.length > 0 || pendingRows.length > 0) && (
+          <SpreadsheetInbox
+            groups={filteredGrouped}
+            pendingRows={pendingRows}
+            onUpdateField={updateConceptField}
+            onDelete={confirmDelete}
+            onMarkReady={(ids) => bulkStatusMut.mutate({ ids, status: "ready" })}
+            onOpenDrawer={(id) => setDrawerItemId(id)}
+            fieldOptions={{ source: sourceOpts, product: productOpts, contentType: contentTypeOpts, creativeType: creativeTypeOpts }}
+            angleOptions={angleOptions}
+            copyOptions={copyOptions}
+            selectedKeys={selectedKeys}
+            onToggleSelect={toggleSelectGroup}
+            onToggleAll={toggleAll}
+          />
+        )}
+
+        {/* Table view (queue/live — keep old table for non-inbox views) */}
+        {viewMode === "table" && focusView !== "inbox" && filteredGrouped.length > 0 && (
           <div className="min-w-max" style={{ borderBottom: "1px solid var(--surface-3)" }}>
             <table className="w-full text-xs border-collapse">
               <thead
@@ -2128,16 +2210,7 @@ export default function Home() {
         />
       )}
 
-      {/* Batch Drop Dialog — triggered by file drag-and-drop */}
-      {batchDropFiles && (
-        <BatchDropDialog
-          files={batchDropFiles}
-          onImport={async (_rows: ParsedRow[]) => {
-            // onImport handled internally; just close
-          }}
-          onClose={() => setBatchDropFiles(null)}
-        />
-      )}
+      {/* BatchDropDialog removed — files now go straight to inbox */}
 
       {/* CSV Import Dialog */}
       {showCSVImport && (
