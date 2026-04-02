@@ -7,6 +7,7 @@ import {
   BookOpen,
   Settings,
   LogOut,
+  Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -18,6 +19,7 @@ const FOCUS_VIEWS = [
 
 const OTHER_NAV = [
   { icon: History, label: "Upload History", path: "/history" },
+  { icon: Users, label: "Handle Bank", path: "/handles" },
   { icon: BookOpen, label: "Naming & Config", path: "/naming-config" },
   { icon: Settings, label: "Meta Settings", path: "/settings" },
 ];

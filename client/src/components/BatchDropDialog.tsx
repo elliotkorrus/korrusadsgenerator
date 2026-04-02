@@ -67,21 +67,21 @@ interface BatchDropDialogProps {
 }
 
 const ALL_FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[] = [
-  { key: "brand", label: "Brand", width: "70px" },
+  { key: "handle", label: "Handle", width: "70px" },
   { key: "initiative", label: "Initiative", width: "90px" },
   { key: "variation", label: "Var.", width: "50px" },
-  { key: "angle", label: "Angle", width: "100px" },
-  { key: "source", label: "Source", width: "100px" },
+  { key: "angle", label: "Theme", width: "100px" },
+  { key: "source", label: "Producer", width: "100px" },
   { key: "product", label: "Product", width: "80px" },
   { key: "copySlug", label: "Copy Slug", width: "100px" },
   { key: "dimensions", label: "Dims", width: "65px" },
   { key: "date", label: "Date", width: "80px" },
   { key: "contentType", label: "Format", width: "70px" },
-  { key: "creativeType", label: "Type", width: "80px" },
+  { key: "creativeType", label: "Style", width: "80px" },
 ];
 
 const ESSENTIAL_FIELD_COLUMNS: { key: keyof AdNameFields; label: string; width?: string }[] = [
-  { key: "angle", label: "Angle", width: "100px" },
+  { key: "angle", label: "Theme", width: "100px" },
   { key: "dimensions", label: "Dims", width: "65px" },
   { key: "contentType", label: "Format", width: "70px" },
 ];
@@ -292,14 +292,14 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
         const copyEntry = copySlug ? (copyEntries as any[]).find((c: any) => c.copySlug === copySlug) : null;
 
         await createMut.mutateAsync({
-          brand: f.brand || bulkDefaults.brand || "OIO",
-          initiative: f.initiative || bulkDefaults.initiative || "",
+          brand: bulkDefaults.brand || f.brand || "OIO",
+          initiative: bulkDefaults.initiative || f.initiative || "",
           variation: f.variation || bulkDefaults.variation || "",
-          angle: f.angle || bulkDefaults.angle || "",
-          source: f.source || bulkDefaults.source || "",
-          product: f.product || bulkDefaults.product || "OIO",
+          angle: bulkDefaults.angle || f.angle || "",
+          source: bulkDefaults.source || f.source || "",
+          product: bulkDefaults.product || f.product || "OIO",
           contentType: f.contentType || bulkDefaults.contentType || "",
-          creativeType: f.creativeType || bulkDefaults.creativeType || "ESTATIC",
+          creativeType: bulkDefaults.creativeType || f.creativeType || "ESTATIC",
           dimensions: f.dimensions || bulkDefaults.dimensions || "",
           copySlug: copySlug,
           filename: f.filename ?? row.file.name.replace(/\.[^.]+$/, ""),
@@ -386,16 +386,6 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
                 <SelectCell value={(bulkDefaults as any)[col.key] || ""} options={optionsMap[col.key] || []} onChange={(v) => applyBulkToAll(col.key, v)} />
               </div>
             ))}
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Agency:</span>
-              <input
-                type="text"
-                value={bulkDefaults.agency || ""}
-                onChange={(e) => setBulkDefaults((p) => ({ ...p, agency: e.target.value }))}
-                placeholder="e.g. Agency A"
-                style={{ width: "90px", padding: "3px 6px", fontSize: "11px", background: "var(--surface-1)", border: "1px solid var(--surface-3)", borderRadius: "4px", color: "var(--text-primary)", fontFamily: "'IBM Plex Sans', sans-serif" }}
-              />
-            </div>
           </div>
         </div>
 

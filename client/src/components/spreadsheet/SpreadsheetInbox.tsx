@@ -46,7 +46,7 @@ interface ConceptGroup {
 
 // ─── Column definitions ──────────────────────────────────────────
 const COLUMNS: { key: string; label: string; width: string; type: "text" | "select" | "readonly" }[] = [
-  { key: "handle", label: "Handle", width: "80px", type: "text" },
+  { key: "handle", label: "Handle", width: "80px", type: "select" },
   { key: "initiative", label: "Init.", width: "80px", type: "text" },
   { key: "variation", label: "Var.", width: "50px", type: "text" },
   { key: "angle", label: "Theme", width: "100px", type: "select" },
@@ -72,6 +72,7 @@ interface Props {
   fieldOptions: Record<string, { value: string; label: string }[]>;
   angleOptions: { value: string; label: string }[];
   copyOptions: { value: string; label: string }[];
+  handleOptions: { value: string; label: string }[];
   selectedKeys: Set<string>;
   onToggleSelect: (key: string) => void;
   onToggleAll: () => void;
@@ -272,6 +273,7 @@ export default function SpreadsheetInbox({
   fieldOptions,
   angleOptions,
   copyOptions,
+  handleOptions,
   selectedKeys,
   onToggleSelect,
   onToggleAll,
@@ -350,6 +352,7 @@ export default function SpreadsheetInbox({
   function getFieldOptions(field: string): { value: string; label: string }[] | undefined {
     if (field === "angle") return angleOptions;
     if (field === "copySlug") return copyOptions;
+    if (field === "handle") return handleOptions;
     return fieldOptions[field];
   }
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { X, Trash2 } from "lucide-react";
 import { generateAdName } from "@shared/naming";
+import { trpc } from "../lib/trpc";
 
 type QueueItem = {
   id: number;
@@ -115,6 +116,18 @@ export default function DetailDrawer({
   metaDefaults,
 }: DetailDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
+  const { data: handleBankEntries = [] } = trpc.handles.list.useQuery();
+
+  // When handle changes via dropdown, auto-fill Page ID and IG Account ID
+  function handleHandleChange(newHandle: string) {
+    const entry = handleBankEntries.find((h) => h.handle === newHandle);
+    const updates: Record<string, any> = { handle: newHandle };
+    if (entry) {
+      if (entry.fbPageId) updates.pageId = entry.fbPageId;
+      if (entry.igAccountId) updates.instagramAccountId = entry.igAccountId;
+    }
+    onUpdate(item.id, updates);
+  }
 
   // Close on Escape
   useEffect(() => {
@@ -406,11 +419,24 @@ export default function DetailDrawer({
           <div style={{ borderTop: "1px solid var(--surface-2)", marginBottom: "16px" }} />
 
           {/* Form fields */}
-          {/* Row 1: Handle + Product */}
+          {/* Row 1: Handle (dropdown from Handle Bank) + Product */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
             <div>
               <div style={labelStyle}>Handle</div>
-              {renderTextInput("handle", item.handle || "korruscircadian")}
+              <select
+                style={selectStyle}
+                value={item.handle || ""}
+                onChange={(e) => handleHandleChange(e.target.value)}
+                onFocus={(e) => { (e.target as HTMLSelectElement).style.borderColor = "rgba(0,153,198,0.6)"; }}
+                onBlur={(e) => { (e.target as HTMLSelectElement).style.borderColor = "var(--surface-3)"; }}
+              >
+                <option value="">--</option>
+                {handleBankEntries.map((h) => (
+                  <option key={h.id} value={h.handle}>
+                    {h.label ? `${h.handle} (${h.label})` : h.handle}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <div style={labelStyle}>Product</div>
@@ -483,16 +509,10 @@ export default function DetailDrawer({
             </div>
           </div>
 
-          {/* Row 6: Date + Agency */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
-            <div>
-              <div style={labelStyle}>Date</div>
-              {renderTextInput("date", item.date)}
-            </div>
-            <div>
-              <div style={labelStyle}>Agency</div>
-              {renderTextInput("agency", item.agency || "")}
-            </div>
+          {/* Row 6: Date */}
+          <div style={{ marginBottom: "12px" }}>
+            <div style={labelStyle}>Date</div>
+            {renderTextInput("date", item.date)}
           </div>
 
           {/* Row 7: Filename (full width) */}

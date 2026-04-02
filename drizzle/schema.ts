@@ -83,6 +83,16 @@ export const metaSettings = pgTable("meta_settings", {
   ...timestamps,
 });
 
+export const handleBank = pgTable("handle_bank", {
+  id: serial("id").primaryKey(),
+  handle: text("handle").notNull().unique(),
+  label: text("label"),
+  fbPageId: text("fb_page_id").notNull().default(""),
+  igAccountId: text("ig_account_id").notNull().default(""),
+  isDefault: boolean("is_default").notNull().default(false),
+  ...timestamps,
+});
+
 export const fieldOptions = pgTable("field_options", {
   id: serial("id").primaryKey(),
   field: text("field").notNull(),

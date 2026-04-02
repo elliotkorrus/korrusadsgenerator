@@ -13,6 +13,7 @@ interface Props {
 }
 
 const FIELD_META: { key: string; label: string; type: "text" | "select"; placeholder?: string }[] = [
+  { key: "handle", label: "Handle", type: "text", placeholder: "korruscircadian" },
   { key: "initiative", label: "Initiative", type: "text", placeholder: "s_001" },
   { key: "variation", label: "Variation", type: "text", placeholder: "v1" },
   { key: "angle", label: "Theme", type: "select" },

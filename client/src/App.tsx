@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import UploadHistory from "./pages/UploadHistory";
 import MetaSettings from "./pages/MetaSettings";
 import NamingConfig from "./pages/NamingConfig";
+import HandleBank from "./pages/HandleBank";
 import Login from "./pages/Login";
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/history" element={<UploadHistory />} />
           <Route path="/naming-config" element={<NamingConfig />} />
+          <Route path="/handles" element={<HandleBank />} />
           <Route path="/settings" element={<MetaSettings />} />
           {/* Legacy redirects */}
           <Route path="/copy-library" element={<Navigate to="/naming-config" replace />} />

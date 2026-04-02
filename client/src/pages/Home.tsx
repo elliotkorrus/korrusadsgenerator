@@ -202,7 +202,7 @@ function exportCSV(items: QueueItem[]) {
   const headers = [
     "Ad Name", "Handle", "Initiative", "Variation", "Theme", "Style",
     "Producer", "Product", "Format", "Dimensions", "Copy", "Filename",
-    "Date", "Status", "Handle", "File URL",
+    "Date", "Status", "File URL",
     "Ad Set ID", "Ad Set Name", "Destination URL", "Display URL", "CTA",
     "Headline", "Body Copy",
   ];
@@ -211,9 +211,9 @@ function exportCSV(items: QueueItem[]) {
     return `"${s}"`;
   };
   const rows = items.map((i) => [
-    i.generatedAdName, i.brand, i.initiative, i.variation, i.angle, i.source,
-    i.product, i.contentType, i.creativeType, i.dimensions, i.copySlug, i.filename,
-    i.date, i.status, i.handle ?? "", i.fileUrl ?? "",
+    i.generatedAdName, i.handle || "korruscircadian", i.initiative, i.variation, i.angle, i.creativeType,
+    i.source, i.product, i.contentType, i.dimensions, i.copySlug, i.filename,
+    i.date, i.status, i.fileUrl ?? "",
     i.adSetId ?? "", i.adSetName ?? "", i.destinationUrl ?? "", i.displayUrl ?? "", i.cta ?? "",
     i.headline ?? "", i.bodyCopy ?? "",
   ].map(escape).join(","));
@@ -250,7 +250,7 @@ function StatusChecklist({ errors }: { errors: string[] }) {
     { label: "Theme", key: "angle" },
     { label: "Producer", key: "source" },
     { label: "Product", key: "product" },
-    { label: "Brand", key: "brand" },
+    { label: "Handle", key: "handle" },
     { label: "Variation", key: "variation" },
     { label: "Copy slug", key: "copySlug" },
     { label: "Filename", key: "filename" },
@@ -520,7 +520,7 @@ function ConceptCard({
               { label: "Producer", el: <InlineSelect value={shared.source || ""} options={sourceOpts} onSave={(v) => onUpdateField("source", v)} disabled={isGroupLocked} /> },
               { label: "Product", el: <InlineSelect value={shared.product || ""} options={productOpts} onSave={(v) => onUpdateField("product", v)} disabled={isGroupLocked} /> },
               { label: "Ad Format", el: <InlineSelect value={shared.contentType || ""} options={contentTypeOpts} onSave={(v) => onUpdateField("contentType", v)} disabled={isGroupLocked} /> },
-              { label: "Type", el: <InlineSelect value={shared.creativeType || ""} options={creativeTypeOpts} onSave={(v) => onUpdateField("creativeType", v)} disabled={isGroupLocked} /> },
+              { label: "Style", el: <InlineSelect value={shared.creativeType || ""} options={creativeTypeOpts} onSave={(v) => onUpdateField("creativeType", v)} disabled={isGroupLocked} /> },
               { label: "Copy", el: <InlineSelect value={shared.copySlug || ""} options={copyOptions} onSave={(v) => onUpdateField("copySlug", v)} disabled={isGroupLocked} /> },
               { label: "Filename", el: <InlineText value={shared.filename || ""} onSave={(v) => onUpdateField("filename", v)} disabled={isGroupLocked} mono placeholder="filename" /> },
               { label: "Date", el: <InlineText value={shared.date || ""} onSave={(v) => onUpdateField("date", v)} disabled={isGroupLocked} mono placeholder="2026-03" /> },
@@ -607,7 +607,6 @@ export default function Home() {
 
   // Feature 4: search
   const [searchText, setSearchText] = useState("");
-  const [agencyFilter, setAgencyFilter] = useState("");
 
   // Feature 5: batch defaults panel
   const [showBatchDefaults, setShowBatchDefaults] = useState(false);
@@ -645,6 +644,11 @@ export default function Home() {
   const allItems = rawAllItems as QueueItem[];
   const drawerItem = useMemo(() => drawerItemId ? allItems.find(i => i.id === drawerItemId) || null : null, [drawerItemId, allItems]);
   const { data: metaDefaults } = trpc.meta.get.useQuery();
+  const { data: handleBankEntries = [] } = trpc.handles.list.useQuery();
+  const handleOptions = useMemo(() => handleBankEntries.map((h) => ({
+    value: h.handle,
+    label: h.label ? `${h.handle} (${h.label})` : h.handle,
+  })), [handleBankEntries]);
   const activeFocusView = FOCUS_VIEWS.find((v) => v.key === focusView) || FOCUS_VIEWS[0];
   const items = useMemo(
     () => allItems.filter((i) => (activeFocusView.statuses as readonly string[]).includes(i.status)),
@@ -862,11 +866,11 @@ export default function Home() {
   // Feature 4: filtered grouped array
   const filteredGrouped = useMemo(() => {
     let result = grouped;
-    // Agency filter
+    // Producer filter
     if (agencyFilter) {
       result = result.filter(({ shared }) => {
-        if (agencyFilter === "__untagged__") return !shared.agency;
-        return shared.agency === agencyFilter;
+        if (agencyFilter === "__untagged__") return !shared.source;
+        return shared.source === agencyFilter;
       });
     }
     // Text search
@@ -960,7 +964,9 @@ export default function Home() {
         body: JSON.stringify({ adId: id }),
       });
       const data = await res.json();
-      if (data.stub) {
+      if (!res.ok) {
+        alert(`Send to Meta failed: ${data.error || data.message || res.statusText}`);
+      } else if (data.stub) {
         setStubPayloads((prev) => ({ ...prev, [id]: data.adPayload }));
       }
     } finally {
@@ -1394,10 +1400,10 @@ export default function Home() {
             {filteredGrouped.length} result{filteredGrouped.length !== 1 ? "s" : ""}
           </span>
         )}
-        {/* Agency filter */}
+        {/* Producer filter */}
         {(() => {
-          const agencies = [...new Set(allItems.map((i) => i.agency).filter(Boolean))] as string[];
-          if (agencies.length === 0) return null;
+          const producers = [...new Set(allItems.map((i) => i.source).filter(Boolean))] as string[];
+          if (producers.length === 0) return null;
           return (
             <select
               value={agencyFilter}
@@ -1405,8 +1411,8 @@ export default function Home() {
               className="text-[11px] px-2 py-1.5 rounded-md focus:outline-none"
               style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: agencyFilter ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Sans', sans-serif" }}
             >
-              <option value="">All agencies</option>
-              {agencies.map((a) => <option key={a} value={a}>{a}</option>)}
+              <option value="">All producers</option>
+              {producers.map((p) => <option key={p} value={p}>{p}</option>)}
               <option value="__untagged__">Untagged</option>
             </select>
           );
@@ -1626,6 +1632,7 @@ export default function Home() {
             fieldOptions={{ source: sourceOpts, product: productOpts, contentType: contentTypeOpts, creativeType: creativeTypeOpts }}
             angleOptions={angleOptions}
             copyOptions={copyOptions}
+            handleOptions={handleOptions}
             selectedKeys={selectedKeys}
             onToggleSelect={toggleSelectGroup}
             onToggleAll={toggleAll}

@@ -210,6 +210,11 @@ const uploadQueueRouter = t.router({
         destinationUrl: existing.destinationUrl, headline: existing.headline,
         bodyCopy: existing.bodyCopy,
         agency: existing.agency,
+        handle: existing.handle,
+        cta: existing.cta,
+        displayUrl: existing.displayUrl,
+        pageId: existing.pageId,
+        instagramAccountId: existing.instagramAccountId,
         conceptKey: input.conceptKey, generatedAdName,
         status: "draft", metaAdId: null, metaCreativeId: null,
         errorMessage: null, uploadedAt: null, fileUrl: null,
@@ -497,6 +502,60 @@ const fieldOptionsRouter = t.router({
     }),
 });
 
+// ─── Handle Bank ───────────────────────────────────────────────
+const handleBankRouter = t.router({
+  list: publicProcedure.query(async () => {
+    return db
+      .select()
+      .from(schema.handleBank)
+      .orderBy(desc(schema.handleBank.createdAt));
+  }),
+
+  create: publicProcedure
+    .input(
+      z.object({
+        handle: z.string().min(1),
+        label: z.string().optional().nullable(),
+        fbPageId: z.string().default(""),
+        igAccountId: z.string().default(""),
+        isDefault: z.boolean().default(false),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const rows = await db.insert(schema.handleBank).values(input).returning();
+      return rows[0];
+    }),
+
+  update: publicProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        handle: z.string().optional(),
+        label: z.string().optional().nullable(),
+        fbPageId: z.string().optional(),
+        igAccountId: z.string().optional(),
+        isDefault: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const { id, ...updates } = input;
+      const rows = await db
+        .update(schema.handleBank)
+        .set({ ...updates, updatedAt: sql`now()` })
+        .where(eq(schema.handleBank.id, id))
+        .returning();
+      return rows[0];
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await db.delete(schema.handleBank)
+        .where(eq(schema.handleBank.id, input.id));
+      return { success: true };
+    }),
+});
+
 // ─── Meta Settings ──────────────────────────────────────────────
 const metaSettingsRouter = t.router({
   get: publicProcedure.query(async () => {
@@ -564,6 +623,7 @@ export const appRouter = t.router({
   angles: angleBankRouter,
   fieldOptions: fieldOptionsRouter,
   meta: metaSettingsRouter,
+  handles: handleBankRouter,
 });
 
 export type AppRouter = typeof appRouter;

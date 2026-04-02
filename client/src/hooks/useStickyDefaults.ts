@@ -8,7 +8,7 @@ export interface StickyDefault {
 export type StickyDefaults = Record<string, StickyDefault>;
 
 const STORAGE_KEY = "korrus-sticky-defaults";
-const FIELDS = ["source", "angle", "product", "date", "initiative", "variation", "copySlug", "creativeType", "agency"] as const;
+const FIELDS = ["handle", "source", "angle", "product", "date", "initiative", "variation", "copySlug", "creativeType"] as const;
 
 function loadDefaults(): StickyDefaults {
   try {
