@@ -37,7 +37,15 @@ export function generateAdName(fields: AdNameFields): string {
   ].filter(Boolean).join("__");
 }
 
-/** Parse a filename or URL to guess ad fields */
+/** Split camelCase / PascalCase into sub-words for keyword matching */
+function splitCamelCase(token: string): string[] {
+  // "DayToNightStills" → ["Day","To","Night","Stills"]
+  return token.replace(/([a-z])([A-Z])/g, "$1_$2").split("_").filter(Boolean);
+}
+
+/** Parse a filename or URL to guess ad fields.
+ *  Philosophy: only set fields we're CONFIDENT about from the filename.
+ *  Anything ambiguous goes to `filename` — session defaults handle the rest. */
 export function parseFilenameToFields(
   input: string
 ): Partial<AdNameFields> & { fileUrl?: string } {
@@ -67,15 +75,14 @@ export function parseFilenameToFields(
     const e = ext[1].toLowerCase();
     if (["mp4", "mov", "avi", "webm"].includes(e)) result.contentType = "VID";
     else if (["jpg", "jpeg", "png", "webp"].includes(e)) result.contentType = "IMG";
-    else if (e === "gif") result.contentType = "IMG"; // GIF treated as IMG
+    else if (e === "gif") result.contentType = "IMG";
   }
 
   // Normalize: replace spaces, hyphens, and dots with underscores for uniform tokenisation
   const normalized = cleanName.replace(/[\s\-\.]+/g, "_");
-  const lower = normalized.toLowerCase();
 
-  // Creative Style keywords
-  const creativeStyleMap: Record<string, string> = {
+  // Creative Style keywords (exact token match only)
+  const CREATIVE_STYLE_MAP: Record<string, string> = {
     ugc: "UGC",
     hifi: "HIFI",
     lofi: "LOFI",
@@ -91,12 +98,6 @@ export function parseFilenameToFields(
     stills: "HIFI",
     still: "HIFI",
   };
-  for (const [keyword, type] of Object.entries(creativeStyleMap)) {
-    if (lower.includes(keyword)) {
-      result.creativeType = type;
-      break;
-    }
-  }
 
   // Known Producer tokens
   const PRODUCER_MAP: Record<string, string> = {
@@ -118,6 +119,7 @@ export function parseFilenameToFields(
     education: "Education",
     featuresbenefits: "FeaturesBenefits",
     features: "FeaturesBenefits",
+    benefits: "FeaturesBenefits",
     founder: "Founder",
     lifestyle: "Lifestyle",
     mediapress: "MediaPress",
@@ -129,7 +131,6 @@ export function parseFilenameToFields(
     promotion: "Promotion",
     promo: "Promotion",
     socialproof: "SocialProof",
-    social: "SocialProof",
     unboxing: "Unboxing",
     unbox: "Unboxing",
     usvsthem: "UsVsThem",
@@ -160,9 +161,15 @@ export function parseFilenameToFields(
   const tokens = normalized.split("_").filter(Boolean);
   const claimed = new Set<number>();
 
-  // Always default product
-  result.product = "BULB";
-  result.brand = "OIO"; // legacy
+  // Build a flat list of sub-words for keyword matching (handles camelCase tokens)
+  // Each sub-word maps back to its parent token index
+  const subWords: { word: string; tokenIdx: number }[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const subs = splitCamelCase(tokens[i]);
+    for (const s of subs) {
+      subWords.push({ word: s.toLowerCase(), tokenIdx: i });
+    }
+  }
 
   // --- Handle: korruscircadian or similar ---
   if (tokens.length > 0) {
@@ -188,38 +195,23 @@ export function parseFilenameToFields(
 
   // --- Dimension from keywords ---
   if (!result.dimensions) {
-    if (/story|stories|reel|9.?16|9x16|vertical/i.test(lower)) result.dimensions = "9:16";
-    else if (/4.?5|4x5/i.test(lower)) result.dimensions = "4:5";
-    else if (/1.?1|1x1|square/i.test(lower)) result.dimensions = "1:1";
-    else if (/16.?9|16x9|landscape|horizontal|wide/i.test(lower)) result.dimensions = "16:9";
-  }
-
-  // --- Date: MMDD or MMDDYY pattern ---
-  for (let i = 0; i < tokens.length; i++) {
-    if (/^\d{4}$/.test(tokens[i]) && !claimed.has(i)) {
-      // Could be MMDD
-      const mm = parseInt(tokens[i].slice(0, 2));
-      const dd = parseInt(tokens[i].slice(2, 4));
-      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-        result.date = tokens[i];
-        claimed.add(i);
-        break;
-      }
+    for (const sw of subWords) {
+      if (claimed.has(sw.tokenIdx)) continue;
+      const w = sw.word;
+      if (["story", "stories", "reel", "vertical"].includes(w)) { result.dimensions = "9:16"; break; }
+      if (["square"].includes(w)) { result.dimensions = "1:1"; break; }
+      if (["landscape", "horizontal", "wide"].includes(w)) { result.dimensions = "16:9"; break; }
     }
-    if (/^\d{6}$/.test(tokens[i]) && !claimed.has(i)) {
-      // MMDDYY
-      result.date = tokens[i].slice(0, 4); // keep MMDD
-      claimed.add(i);
-      break;
+    // Also check raw patterns like "9x16" embedded in tokens
+    if (!result.dimensions) {
+      const norm = normalized.toLowerCase();
+      if (/9.?16/.test(norm)) result.dimensions = "9:16";
+      else if (/4.?5/.test(norm)) result.dimensions = "4:5";
+      else if (/16.?9/.test(norm)) result.dimensions = "16:9";
     }
   }
-  // Default date to current MMDD
-  if (!result.date) {
-    const d = new Date();
-    result.date = `${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  }
 
-  // --- Producer tokens ---
+  // --- Producer: exact token match ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
     const tl = tokens[i].toLowerCase();
@@ -230,14 +222,88 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Theme tokens ---
+  // --- Creative Style: exact token match OR camelCase sub-word match ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    const tl = tokens[i].toLowerCase();
+    if (tl in CREATIVE_STYLE_MAP) {
+      result.creativeType = CREATIVE_STYLE_MAP[tl];
+      claimed.add(i);
+      break;
+    }
+  }
+  // If not found as exact token, check camelCase sub-words
+  if (!result.creativeType) {
+    for (const sw of subWords) {
+      if (claimed.has(sw.tokenIdx)) continue;
+      if (sw.word in CREATIVE_STYLE_MAP) {
+        result.creativeType = CREATIVE_STYLE_MAP[sw.word];
+        claimed.add(sw.tokenIdx);
+        break;
+      }
+    }
+  }
+
+  // --- Theme: exact token match, then multi-token join, then sub-word ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
     const tl = tokens[i].toLowerCase();
     if (tl in THEME_MAP) {
       result.angle = THEME_MAP[tl];
       claimed.add(i);
+      // Also claim adjacent tokens that form the same theme (e.g. "features" + "benefits")
+      if (i + 1 < tokens.length && !claimed.has(i + 1)) {
+        const combined = tl + tokens[i + 1].toLowerCase();
+        if (combined in THEME_MAP) claimed.add(i + 1);
+      }
       break;
+    }
+  }
+  // Multi-token theme: join consecutive unclaimed tokens and check
+  if (!result.angle) {
+    for (let i = 0; i < tokens.length - 1; i++) {
+      if (claimed.has(i) || claimed.has(i + 1)) continue;
+      const combined = (tokens[i] + tokens[i + 1]).toLowerCase();
+      if (combined in THEME_MAP) {
+        result.angle = THEME_MAP[combined];
+        claimed.add(i);
+        claimed.add(i + 1);
+        break;
+      }
+    }
+  }
+  // Sub-word theme check (e.g. "DayToNight" won't match, but "Unboxing" inside a compound will)
+  if (!result.angle) {
+    for (const sw of subWords) {
+      if (claimed.has(sw.tokenIdx)) continue;
+      if (sw.word in THEME_MAP) {
+        result.angle = THEME_MAP[sw.word];
+        claimed.add(sw.tokenIdx);
+        break;
+      }
+    }
+  }
+
+  // --- Date: MMDD or MMDDYY pattern (only valid dates) ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    if (/^\d{4}$/.test(tokens[i])) {
+      const mm = parseInt(tokens[i].slice(0, 2));
+      const dd = parseInt(tokens[i].slice(2, 4));
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        result.date = tokens[i];
+        claimed.add(i);
+        break;
+      }
+    }
+    if (/^\d{6}$/.test(tokens[i]) && !claimed.has(i)) {
+      const mm = parseInt(tokens[i].slice(0, 2));
+      const dd = parseInt(tokens[i].slice(2, 4));
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        result.date = tokens[i].slice(0, 4);
+        claimed.add(i);
+        break;
+      }
     }
   }
 
@@ -252,12 +318,12 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Initiative: short alpha + numeric pattern (e.g. s_004) ---
+  // --- Initiative: letter_number pattern (e.g. "s_004", "e_001") ---
   if (!result.initiative) {
     for (let i = 0; i < tokens.length - 1; i++) {
       if (claimed.has(i) || claimed.has(i + 1)) continue;
       if (/^[a-zA-Z]{1,3}$/.test(tokens[i]) && /^\d+$/.test(tokens[i + 1])) {
-        result.initiative = `${tokens[i]}_${tokens[i + 1]}`;
+        result.initiative = `${tokens[i].toLowerCase()}_${tokens[i + 1]}`;
         claimed.add(i);
         claimed.add(i + 1);
         break;
@@ -265,16 +331,23 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Variation: "v1", "v2", etc. ---
+  // --- Variation: "v1", "v2" or alphanumeric like "1a", "4B", "3B" ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
+    // Standard "v1", "v2" format
     if (/^v\d+$/i.test(tokens[i])) {
       result.variation = tokens[i].toLowerCase();
       claimed.add(i);
       break;
     }
+    // Short alphanumeric variation codes: "1a", "4B", "3B", "2c"
+    // Must be 2-3 chars, digit+letter or letter+digit
+    if (/^(\d[a-zA-Z]|[a-zA-Z]\d)[a-zA-Z0-9]?$/.test(tokens[i]) && tokens[i].length <= 3) {
+      result.variation = tokens[i].toUpperCase();
+      claimed.add(i);
+      break;
+    }
   }
-  if (!result.variation) result.variation = "v1";
 
   // --- Product: BULB or SPHERE ---
   for (let i = 0; i < tokens.length; i++) {
@@ -284,59 +357,42 @@ export function parseFilenameToFields(
     if (tl === "sphere") { result.product = "SPHERE"; claimed.add(i); break; }
   }
 
-  // --- Copy slug: C-prefixed tokens ---
+  // --- Copy slug: C-prefixed tokens (rejoin "C" + next token if split) ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
-    if (/^C-/i.test(tokens[i])) {
+    // Already joined: "C-BlueLight" survived as one token
+    if (/^C-.+/i.test(tokens[i])) {
       result.copySlug = tokens[i];
       claimed.add(i);
       break;
     }
+    // Split case: token is just "C" and next token is the slug name
+    if (tokens[i] === "C" && i + 1 < tokens.length && !claimed.has(i + 1)) {
+      result.copySlug = `C-${tokens[i + 1]}`;
+      claimed.add(i);
+      claimed.add(i + 1);
+      break;
+    }
   }
 
-  // --- Claim creative style keywords ---
+  // --- Claim remaining style/dimension keyword tokens (don't let them leak) ---
   const CREATIVE_WORDS = new Set(["ugc", "hifi", "lofi", "gfx", "motion", "mashup", "meme", "screen", "photo", "ai", "demo", "static", "stills", "still"]);
-  for (let i = 0; i < tokens.length; i++) {
-    if (claimed.has(i)) continue;
-    if (CREATIVE_WORDS.has(tokens[i].toLowerCase())) claimed.add(i);
-  }
-
-  // --- Claim dimension keyword tokens ---
   const DIM_WORDS = new Set(["story", "stories", "reel", "vertical", "landscape", "horizontal", "wide", "square", "feed"]);
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
-    if (DIM_WORDS.has(tokens[i].toLowerCase())) claimed.add(i);
+    const tl = tokens[i].toLowerCase();
+    if (CREATIVE_WORDS.has(tl) || DIM_WORDS.has(tl)) claimed.add(i);
   }
 
-  // --- Remaining unclaimed tokens → could be theme ---
-  if (!result.angle) {
-    const remainingTokens: string[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-      if (!claimed.has(i)) remainingTokens.push(tokens[i]);
-    }
-    if (remainingTokens.length > 0) {
-      result.angle = remainingTokens
-        .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
-        .join("");
-    }
-  }
+  // --- Filename: always the clean original filename (no guessing) ---
+  result.filename = cleanName;
 
-  // --- Default creative style ---
-  if (!result.creativeType) result.creativeType = "UGC";
+  // --- DO NOT dump unclaimed tokens into theme ---
+  // Unclaimed tokens stay in the filename. Session defaults handle theme.
 
-  // --- Default handle ---
+  // --- Minimal defaults: only set what we're sure about ---
   if (!result.handle) result.handle = "korruscircadian";
-
-  // --- Filename: cleanName minus the dimension token ---
-  if (result.dimensions) {
-    const dimToken = result.dimensions.replace(":", "x");
-    const filenameTokens = tokens.filter(
-      (t) => t.toLowerCase() !== dimToken.toLowerCase()
-    );
-    result.filename = filenameTokens.join("_");
-  } else {
-    result.filename = normalized;
-  }
+  result.brand = "OIO"; // legacy
 
   return result;
 }

@@ -5,6 +5,7 @@ interface DashboardMetricsProps {
     id: number;
     status: string;
     agency: string | null;
+    source: string | null;
     dimensions: string;
     contentType: string;
     conceptKey: string | null;
@@ -100,14 +101,14 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
 
     const uploadedPct = total > 0 ? Math.round((uploadedCount / total) * 100) : 0;
 
-    // Agency breakdown
-    const agencyCounts: Record<string, number> = {};
+    // Producer breakdown
+    const producerCounts: Record<string, number> = {};
     for (const item of items) {
-      const key = item.agency || "Untagged";
-      agencyCounts[key] = (agencyCounts[key] || 0) + 1;
+      const key = item.source || "Untagged";
+      producerCounts[key] = (producerCounts[key] || 0) + 1;
     }
-    const agencySorted = Object.entries(agencyCounts).sort((a, b) => b[1] - a[1]);
-    const maxAgencyCount = agencySorted.length > 0 ? agencySorted[0][1] : 0;
+    const producerSorted = Object.entries(producerCounts).sort((a, b) => b[1] - a[1]);
+    const maxProducerCount = producerSorted.length > 0 ? producerSorted[0][1] : 0;
 
     // Missing sizes — a concept is complete when it has at least one Story (9:16)
     // AND at least one Feed (4:5, 1:1, or 16:9) dimension.
@@ -140,8 +141,8 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
       uploadedCount,
       uploadedPct,
       needsAttention,
-      agencySorted,
-      maxAgencyCount,
+      producerSorted,
+      maxProducerCount,
       incomplete,
       missingStory,
       missingFeed,
@@ -159,8 +160,8 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
       pct: metrics.total > 0 ? (metrics.statusCounts[s] / metrics.total) * 100 : 0,
     }));
 
-  const visibleAgencies = metrics.agencySorted.slice(0, 4);
-  const hiddenAgencyCount = Math.max(0, metrics.agencySorted.length - 4);
+  const visibleProducers = metrics.producerSorted.slice(0, 4);
+  const hiddenProducerCount = Math.max(0, metrics.producerSorted.length - 4);
 
   return (
     <div
@@ -269,17 +270,17 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
           `}</style>
         </div>
 
-        {/* By Agency */}
+        {/* By Producer */}
         <div style={{ ...cardStyle, minWidth: 180 }}>
-          <div style={labelStyle}>By Agency</div>
+          <div style={labelStyle}>By Producer</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {visibleAgencies.length === 0 && (
+            {visibleProducers.length === 0 && (
               <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No items</span>
             )}
-            {visibleAgencies.map(([name, count]) => {
+            {visibleProducers.map(([name, count]) => {
               const barPct =
-                metrics.maxAgencyCount > 0
-                  ? (count / metrics.maxAgencyCount) * 100
+                metrics.maxProducerCount > 0
+                  ? (count / metrics.maxProducerCount) * 100
                   : 0;
               const color = agencyColor(name);
               return (
@@ -341,9 +342,9 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
                 </div>
               );
             })}
-            {hiddenAgencyCount > 0 && (
+            {hiddenProducerCount > 0 && (
               <span style={{ fontSize: 10, color: "var(--text-muted)", paddingLeft: 64 }}>
-                +{hiddenAgencyCount} more
+                +{hiddenProducerCount} more
               </span>
             )}
           </div>

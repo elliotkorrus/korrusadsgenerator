@@ -741,23 +741,23 @@ export default function Home() {
             if (dims) parsed.dimensions = dims;
           } catch { /* ignore */ }
         }
-        // Merge sticky defaults (only for fields not already detected)
+        // Merge: ENABLED session defaults WIN over parser guesses (batch-friendly)
+        // Parser only fills in what defaults don't cover
         const fields: Record<string, string> = {
-          brand: parsed.brand || activeDefaults.brand || "OIO",
-          handle: parsed.handle || activeDefaults.handle || "korruscircadian",
-          initiative: parsed.initiative || activeDefaults.initiative || "",
-          variation: parsed.variation || activeDefaults.variation || "v1",
-          angle: parsed.angle || activeDefaults.angle || "",
-          source: parsed.source || activeDefaults.source || "",
-          product: parsed.product || activeDefaults.product || "BULB",
+          brand: activeDefaults.brand || parsed.brand || "OIO",
+          handle: activeDefaults.handle || parsed.handle || "korruscircadian",
+          initiative: activeDefaults.initiative || parsed.initiative || "",
+          variation: parsed.variation || activeDefaults.variation || "",
+          angle: activeDefaults.angle || parsed.angle || "",
+          source: activeDefaults.source || parsed.source || "",
+          product: activeDefaults.product || parsed.product || "BULB",
           contentType: parsed.contentType || activeDefaults.contentType || "IMG",
-          creativeType: parsed.creativeType || activeDefaults.creativeType || "UGC",
+          creativeType: activeDefaults.creativeType || parsed.creativeType || "",
           dimensions: parsed.dimensions || "",
-          copySlug: parsed.copySlug || activeDefaults.copySlug || "",
+          copySlug: activeDefaults.copySlug || parsed.copySlug || "",
           filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
-          date: parsed.date || activeDefaults.date || getCurrentYearMonth(),
+          date: activeDefaults.date || parsed.date || getCurrentYearMonth(),
         };
-        if (activeDefaults.agency) fields.agency = activeDefaults.agency;
 
         newPending.push({
           tempId: crypto.randomUUID(),
