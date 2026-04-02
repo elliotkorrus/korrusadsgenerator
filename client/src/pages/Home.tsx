@@ -927,6 +927,7 @@ export default function Home() {
   // Feature 1: get row validation errors
   function getRowErrors(item: QueueItem): string[] {
     return validateUploadRow({
+      handle: item.handle || "korruscircadian",
       brand: item.brand ?? "",
       initiative: item.initiative ?? "",
       variation: item.variation ?? "",
