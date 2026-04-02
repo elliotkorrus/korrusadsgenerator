@@ -120,9 +120,11 @@ function Cell({
   options,
   isFocused,
   isEditing,
+  isFillTarget,
   onFocus,
   onStartEdit,
   onCommit,
+  onFillHandleMouseDown,
   disabled,
 }: {
   value: string;
@@ -131,9 +133,11 @@ function Cell({
   options?: { value: string; label: string }[];
   isFocused: boolean;
   isEditing: boolean;
+  isFillTarget: boolean;
   onFocus: () => void;
   onStartEdit: () => void;
   onCommit: (value: string) => void;
+  onFillHandleMouseDown?: (e: React.MouseEvent) => void;
   disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
@@ -153,14 +157,18 @@ function Cell({
   }, [value]);
 
   const filled = value && value.trim();
-  const cellBg = filled ? "rgba(46,160,67,0.06)" : "transparent";
-  const cellBorder = isFocused ? "1px solid rgba(0,153,198,0.6)" : "1px solid transparent";
+  const cellBg = isFillTarget ? "rgba(0,153,198,0.10)" : filled ? "rgba(46,160,67,0.06)" : "transparent";
+  const cellBorder = isFocused
+    ? "1px solid rgba(0,153,198,0.6)"
+    : isFillTarget
+    ? "1px solid rgba(0,153,198,0.3)"
+    : "1px solid transparent";
 
   if (type === "readonly") {
     return (
       <td
         className="px-2 py-1 whitespace-nowrap"
-        style={{ background: cellBg, outline: cellBorder, outlineOffset: "-1px", fontSize: "11px", color: "var(--text-secondary)" }}
+        style={{ background: cellBg, outline: cellBorder, outlineOffset: "-1px", fontSize: "11px", color: "var(--text-secondary)", position: "relative" }}
       >
         {value || <span style={{ color: "var(--text-muted)" }}>-</span>}
       </td>
@@ -170,7 +178,7 @@ function Cell({
   if (isEditing && !disabled) {
     if (type === "select" && options) {
       return (
-        <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px" }}>
+        <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px", position: "relative" }}>
           <select
             ref={inputRef as React.RefObject<HTMLSelectElement>}
             value={editValue}
@@ -191,7 +199,7 @@ function Cell({
       );
     }
     return (
-      <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px" }}>
+      <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px", position: "relative" }}>
         <input
           ref={inputRef as React.RefObject<HTMLInputElement>}
           type="text"
@@ -222,11 +230,31 @@ function Cell({
         fontSize: "11px",
         color: filled ? "var(--text-primary)" : "var(--text-muted)",
         fontFamily: field === "filename" || field === "date" ? "'IBM Plex Mono', monospace" : "inherit",
+        position: "relative",
       }}
       onClick={() => { onFocus(); onStartEdit(); }}
       onMouseDown={(e) => { if (e.detail === 1) onFocus(); }}
     >
       {value || <span style={{ opacity: 0.4 }}>-</span>}
+      {/* Fill handle — small blue square at bottom-right of focused cell */}
+      {isFocused && !disabled && onFillHandleMouseDown && (
+        <div
+          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); onFillHandleMouseDown(e); }}
+          style={{
+            position: "absolute",
+            bottom: -3,
+            right: -3,
+            width: 7,
+            height: 7,
+            background: "#0099C6",
+            border: "1px solid var(--surface-1)",
+            borderRadius: 1,
+            cursor: "crosshair",
+            zIndex: 5,
+          }}
+          title="Drag to fill rows below"
+        />
+      )}
     </td>
   );
 }
@@ -250,6 +278,63 @@ export default function SpreadsheetInbox({
   const [focusedCell, setFocusedCell] = useState<{ groupIdx: number; colIdx: number } | null>(null);
   const [editingCell, setEditingCell] = useState<{ groupIdx: number; colIdx: number } | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // ─── Fill-drag state ─────────────────────────────────────────
+  const [fillDrag, setFillDrag] = useState<{
+    sourceGroupIdx: number;
+    colIdx: number;
+    sourceValue: string;
+    targetGroupIdx: number;
+  } | null>(null);
+  const fillDragRef = useRef(fillDrag);
+  fillDragRef.current = fillDrag;
+
+  // Track which row each <tr> element corresponds to for mousemove hit-testing
+  const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+
+  const handleFillHandleMouseDown = useCallback((groupIdx: number, colIdx: number, value: string) => {
+    const drag = { sourceGroupIdx: groupIdx, colIdx, sourceValue: value, targetGroupIdx: groupIdx };
+    setFillDrag(drag);
+    fillDragRef.current = drag;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      // Find which row the mouse is over
+      const current = fillDragRef.current;
+      if (!current) return;
+      for (const [gIdx, el] of rowRefs.current.entries()) {
+        const rect = el.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          // Only allow dragging downward from source
+          if (gIdx >= current.sourceGroupIdx && gIdx !== current.targetGroupIdx) {
+            const updated = { ...current, targetGroupIdx: gIdx };
+            setFillDrag(updated);
+            fillDragRef.current = updated;
+          }
+          break;
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      const final = fillDragRef.current;
+      if (final && final.targetGroupIdx > final.sourceGroupIdx) {
+        // Apply the fill
+        const col = COLUMNS[final.colIdx];
+        for (let i = final.sourceGroupIdx + 1; i <= final.targetGroupIdx; i++) {
+          if (i < groups.length) {
+            onUpdateField(groups[i].key, col.key, final.sourceValue);
+          }
+        }
+      }
+      setFillDrag(null);
+      fillDragRef.current = null;
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, [groups, onUpdateField]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedGroups((prev) => {
@@ -408,16 +493,18 @@ export default function SpreadsheetInbox({
             return (
               <React.Fragment key={key}>
                 <tr
+                  ref={(el) => { if (el) rowRefs.current.set(gIdx, el); else rowRefs.current.delete(gIdx); }}
                   style={{
                     background: isSelected ? "rgba(0,153,198,0.06)" : undefined,
                     borderBottom: "1px solid var(--surface-2)",
+                    userSelect: fillDrag ? "none" : undefined,
                   }}
                   className="group/row"
                   onMouseEnter={(e) => {
-                    if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(0,153,198,0.02)";
+                    if (!isSelected && !fillDrag) (e.currentTarget as HTMLElement).style.background = "rgba(0,153,198,0.02)";
                   }}
                   onMouseLeave={(e) => {
-                    if (!isSelected) (e.currentTarget as HTMLElement).style.background = "";
+                    if (!isSelected && !fillDrag) (e.currentTarget as HTMLElement).style.background = "";
                   }}
                 >
                   {/* Checkbox */}
@@ -467,21 +554,30 @@ export default function SpreadsheetInbox({
                     <DimBadges rows={rows} />
                   </td>
                   {/* Editable cells */}
-                  {COLUMNS.map((col, cIdx) => (
-                    <Cell
-                      key={col.key}
-                      value={(shared as any)[col.key] || ""}
-                      field={col.key}
-                      type={col.type}
-                      options={getFieldOptions(col.key)}
-                      isFocused={focusedCell?.groupIdx === gIdx && focusedCell?.colIdx === cIdx}
-                      isEditing={editingCell?.groupIdx === gIdx && editingCell?.colIdx === cIdx}
-                      onFocus={() => setFocusedCell({ groupIdx: gIdx, colIdx: cIdx })}
-                      onStartEdit={() => setEditingCell({ groupIdx: gIdx, colIdx: cIdx })}
-                      onCommit={(v) => handleCommit(key, col.key, v)}
-                      disabled={isLocked}
-                    />
-                  ))}
+                  {COLUMNS.map((col, cIdx) => {
+                    const cellValue = (shared as any)[col.key] || "";
+                    const isFillTarget = fillDrag !== null
+                      && fillDrag.colIdx === cIdx
+                      && gIdx > fillDrag.sourceGroupIdx
+                      && gIdx <= fillDrag.targetGroupIdx;
+                    return (
+                      <Cell
+                        key={col.key}
+                        value={cellValue}
+                        field={col.key}
+                        type={col.type}
+                        options={getFieldOptions(col.key)}
+                        isFocused={focusedCell?.groupIdx === gIdx && focusedCell?.colIdx === cIdx}
+                        isEditing={editingCell?.groupIdx === gIdx && editingCell?.colIdx === cIdx}
+                        isFillTarget={isFillTarget}
+                        onFocus={() => setFocusedCell({ groupIdx: gIdx, colIdx: cIdx })}
+                        onStartEdit={() => setEditingCell({ groupIdx: gIdx, colIdx: cIdx })}
+                        onCommit={(v) => handleCommit(key, col.key, v)}
+                        onFillHandleMouseDown={(e) => handleFillHandleMouseDown(gIdx, cIdx, cellValue)}
+                        disabled={isLocked}
+                      />
+                    );
+                  })}
                   {/* Completeness */}
                   <td className="px-2 py-1">
                     <CompletenessDot item={shared} />
