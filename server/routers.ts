@@ -71,6 +71,7 @@ const uploadQueueRouter = t.router({
     )
     .mutation(async ({ input }) => {
       const generatedAdName = generateAdName({
+        handle: input.handle || "korruscircadian",
         brand: input.brand,
         initiative: input.initiative,
         variation: input.variation,
@@ -142,6 +143,7 @@ const uploadQueueRouter = t.router({
 
       const merged = { ...current, ...updates };
       const generatedAdName = generateAdName({
+        handle: merged.handle || "korruscircadian",
         brand: merged.brand,
         initiative: merged.initiative,
         variation: merged.variation,
@@ -185,6 +187,7 @@ const uploadQueueRouter = t.router({
       const existing = allRows.find((r: any) => r.conceptKey === input.conceptKey);
       if (!existing) throw new Error("Concept not found");
       const generatedAdName = generateAdName({
+        handle: existing.handle || "korruscircadian",
         brand: existing.brand, initiative: existing.initiative,
         variation: existing.variation, angle: existing.angle,
         source: existing.source, product: existing.product,
@@ -268,6 +271,7 @@ const uploadQueueRouter = t.router({
 
         for (const row of sourceRows) {
           const newAdName = generateAdName({
+            handle: primary.handle || "korruscircadian",
             brand: primary.brand,
             initiative: primary.initiative,
             variation: primary.variation,

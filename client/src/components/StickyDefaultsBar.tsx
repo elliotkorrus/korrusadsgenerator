@@ -14,13 +14,13 @@ interface Props {
 
 const FIELD_META: { key: string; label: string; type: "text" | "select"; placeholder?: string }[] = [
   { key: "initiative", label: "Initiative", type: "text", placeholder: "s_001" },
-  { key: "variation", label: "Variation", type: "text", placeholder: "V1" },
-  { key: "angle", label: "Angle", type: "select" },
-  { key: "source", label: "Source", type: "select" },
+  { key: "variation", label: "Variation", type: "text", placeholder: "v1" },
+  { key: "angle", label: "Theme", type: "select" },
+  { key: "creativeType", label: "Style", type: "select" },
+  { key: "source", label: "Producer", type: "select" },
   { key: "product", label: "Product", type: "select" },
-  { key: "creativeType", label: "Type", type: "select" },
   { key: "copySlug", label: "Copy", type: "select" },
-  { key: "date", label: "Date", type: "text", placeholder: "2026-04" },
+  { key: "date", label: "Date", type: "text", placeholder: "0402" },
   { key: "agency", label: "Agency", type: "text", placeholder: "Internal" },
 ];
 

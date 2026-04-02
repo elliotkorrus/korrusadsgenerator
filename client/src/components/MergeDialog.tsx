@@ -193,8 +193,8 @@ export default function MergeDialog({ groups, onConfirm, onClose, isLoading }: M
                     {/* Key fields */}
                     <div className="space-y-1">
                       <FieldRow label="Initiative" value={group.shared.initiative} />
-                      <FieldRow label="Angle" value={group.shared.angle} />
-                      <FieldRow label="Source" value={group.shared.source} />
+                      <FieldRow label="Theme" value={group.shared.angle} />
+                      <FieldRow label="Producer" value={group.shared.source} />
                       <FieldRow label="Copy" value={group.shared.copySlug} />
                       <FieldRow label="Filename" value={group.shared.filename} />
                     </div>

@@ -1,34 +1,37 @@
 // Core business logic: ad naming convention
+// Structure: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date
 
 export interface AdNameFields {
-  brand: string;
+  handle: string;
   initiative: string;
   variation: string;
-  angle: string;
-  source: string;
-  product: string;
-  contentType: string;
-  creativeType: string;
+  angle: string;       // "Theme" in UI
+  creativeType: string; // "Creative Style" in UI
+  source: string;       // "Producer" in UI
+  contentType: string;  // "Ad Format" in UI
   dimensions: string;
   copySlug: string;
-  filename: string;
+  product: string;
   date: string;
+  // Legacy fields kept for compatibility
+  brand: string;
+  filename: string;
 }
 
-/** Build the 11-field ad name separated by double underscores (filename stored but excluded) */
+/** Build the ad name: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date */
 export function generateAdName(fields: AdNameFields): string {
   const dims = fields.dimensions.replace(":", "x"); // 9:16 → 9x16
   return [
-    fields.brand,
+    fields.handle,
     fields.initiative,
     fields.variation,
-    fields.angle,
-    fields.source,
-    fields.product,
-    fields.contentType,
-    fields.creativeType,
+    fields.angle,         // Theme
+    fields.creativeType,  // Creative Style
+    fields.source,        // Producer
+    fields.contentType,   // Ad Format
     dims,
     fields.copySlug,
+    fields.product,
     fields.date,
   ].filter(Boolean).join("__");
 }
@@ -58,60 +61,80 @@ export function parseFilenameToFields(
     ""
   );
 
-  // Content type from extension
+  // Ad Format from extension
   if (ext) {
     const e = ext[1].toLowerCase();
     if (["mp4", "mov", "avi", "webm"].includes(e)) result.contentType = "VID";
-    else if (["jpg", "jpeg", "png", "webp"].includes(e))
-      result.contentType = "IMG";
-    else if (e === "gif") result.contentType = "GIF";
+    else if (["jpg", "jpeg", "png", "webp"].includes(e)) result.contentType = "IMG";
+    else if (e === "gif") result.contentType = "IMG"; // GIF treated as IMG
   }
 
   // Normalize: replace spaces, hyphens, and dots with underscores for uniform tokenisation
   const normalized = cleanName.replace(/[\s\-\.]+/g, "_");
   const lower = normalized.toLowerCase();
 
-  // Creative type keywords (scanned against full filename)
-  const creativeTypeMap: Record<string, string> = {
+  // Creative Style keywords
+  const creativeStyleMap: Record<string, string> = {
     ugc: "UGC",
-    meme: "MEME",
+    hifi: "HIFI",
+    lofi: "LOFI",
     gfx: "GFX",
     motion: "GFX",
     mashup: "MASHUP",
+    meme: "MEME",
     screen: "SCREEN",
-    testi: "TESTI",
-    "ai_gen": "AI",
-    catalog: "CATALOG",
-    stills: "ESTATIC",
-    still: "ESTATIC",
-    static: "ESTATIC",
-    carousel: "CAR",
+    photo: "PHOTO",
+    ai: "AI",
+    demo: "DEMO",
+    static: "HIFI",
+    stills: "HIFI",
+    still: "HIFI",
   };
-  for (const [keyword, type] of Object.entries(creativeTypeMap)) {
+  for (const [keyword, type] of Object.entries(creativeStyleMap)) {
     if (lower.includes(keyword)) {
       result.creativeType = type;
-      // "stills" also confirms contentType = IMG
-      if (keyword === "stills" || keyword === "still" || keyword === "static") {
-        if (!result.contentType) result.contentType = "IMG";
-      }
       break;
     }
   }
 
-  // Known source tokens (case-insensitive exact-token match)
-  const SOURCE_MAP: Record<string, string> = {
+  // Known Producer tokens
+  const PRODUCER_MAP: Record<string, string> = {
     ng: "NG",
-    paid: "PAID",
-    ugc: "UGC",
-    organic: "ORG",
-    org: "ORG",
-    studio: "STUDIO",
-    stock: "STOCK",
-    ai: "AI",
-    creator: "CREATOR",
+    scl: "SCL",
+    scalable: "SCL",
+    red: "RED",
+    realeyes: "RED",
+    iho: "IHO",
+    ihp: "IHP",
+    wl: "WL",
+    whitelisting: "WL",
   };
 
-  // Initiative keywords — common campaign naming patterns
+  // Theme keywords
+  const THEME_MAP: Record<string, string> = {
+    beforeafter: "BeforeAfter",
+    curiosity: "Curiosity",
+    education: "Education",
+    featuresbenefits: "FeaturesBenefits",
+    features: "FeaturesBenefits",
+    founder: "Founder",
+    lifestyle: "Lifestyle",
+    mediapress: "MediaPress",
+    press: "MediaPress",
+    mythbusting: "MythBusting",
+    myth: "MythBusting",
+    problemsolution: "ProblemSolution",
+    problem: "ProblemSolution",
+    promotion: "Promotion",
+    promo: "Promotion",
+    socialproof: "SocialProof",
+    social: "SocialProof",
+    unboxing: "Unboxing",
+    unbox: "Unboxing",
+    usvsthem: "UsVsThem",
+  };
+
+  // Initiative keywords
   const INITIATIVE_MAP: Record<string, string> = {
     evergreen: "e_001",
     evg: "e_001",
@@ -129,23 +152,22 @@ export function parseFilenameToFields(
     q4: "q_004",
   };
 
-  // Known dimension values after conversion
+  // Known dimension values
   const VALID_DIMS = new Set(["9:16", "4:5", "1:1", "16:9"]);
 
   // Split the normalized name into tokens by underscore
   const tokens = normalized.split("_").filter(Boolean);
-
-  // Track which token indices have been claimed
   const claimed = new Set<number>();
 
-  // Always default brand and product
-  result.brand = "OIO";
-  result.product = "OIO";
+  // Always default product
+  result.product = "BULB";
+  result.brand = "OIO"; // legacy
 
-  // --- Token 0: Brand ---
+  // --- Handle: korruscircadian or similar ---
   if (tokens.length > 0) {
-    const t0 = tokens[0].toUpperCase();
-    if (t0 === "KORRUS" || t0 === "KRS" || t0 === "OIO") {
+    const t0 = tokens[0].toLowerCase();
+    if (t0 === "korruscircadian" || t0 === "korrus" || t0 === "krs") {
+      result.handle = "korruscircadian";
       claimed.add(0);
     }
   }
@@ -163,7 +185,7 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Dimension from keywords in filename ---
+  // --- Dimension from keywords ---
   if (!result.dimensions) {
     if (/story|stories|reel|9.?16|9x16|vertical/i.test(lower)) result.dimensions = "9:16";
     else if (/4.?5|4x5/i.test(lower)) result.dimensions = "4:5";
@@ -171,27 +193,48 @@ export function parseFilenameToFields(
     else if (/16.?9|16x9|landscape|horizontal|wide/i.test(lower)) result.dimensions = "16:9";
   }
 
-  // --- Date: YYYY-MM pattern ---
+  // --- Date: MMDD or MMDDYY pattern ---
   for (let i = 0; i < tokens.length; i++) {
-    if (/^\d{4}-?\d{2}$/.test(tokens[i]) && tokens[i].length <= 7) {
-      const t = tokens[i];
-      result.date = t.includes("-") ? t : `${t.slice(0, 4)}-${t.slice(4)}`;
+    if (/^\d{4}$/.test(tokens[i]) && !claimed.has(i)) {
+      // Could be MMDD
+      const mm = parseInt(tokens[i].slice(0, 2));
+      const dd = parseInt(tokens[i].slice(2, 4));
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        result.date = tokens[i];
+        claimed.add(i);
+        break;
+      }
+    }
+    if (/^\d{6}$/.test(tokens[i]) && !claimed.has(i)) {
+      // MMDDYY
+      result.date = tokens[i].slice(0, 4); // keep MMDD
       claimed.add(i);
       break;
     }
   }
-  // Default date to current month if not found
+  // Default date to current MMDD
   if (!result.date) {
     const d = new Date();
-    result.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    result.date = `${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   }
 
-  // --- Source tokens ---
+  // --- Producer tokens ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
     const tl = tokens[i].toLowerCase();
-    if (tl in SOURCE_MAP) {
-      result.source = SOURCE_MAP[tl];
+    if (tl in PRODUCER_MAP) {
+      result.source = PRODUCER_MAP[tl];
+      claimed.add(i);
+      break;
+    }
+  }
+
+  // --- Theme tokens ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    const tl = tokens[i].toLowerCase();
+    if (tl in THEME_MAP) {
+      result.angle = THEME_MAP[tl];
       claimed.add(i);
       break;
     }
@@ -221,60 +264,67 @@ export function parseFilenameToFields(
     }
   }
 
-  // --- Variation: "v1", "v2", "V1", or standalone single digit ---
+  // --- Variation: "v1", "v2", etc. ---
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
     if (/^v\d+$/i.test(tokens[i])) {
-      result.variation = tokens[i].toUpperCase();
+      result.variation = tokens[i].toLowerCase();
       claimed.add(i);
       break;
     }
   }
-  if (!result.variation) {
-    for (let i = 0; i < tokens.length; i++) {
-      if (claimed.has(i)) continue;
-      if (/^\d$/.test(tokens[i])) {
-        result.variation = `V${tokens[i]}`;
-        claimed.add(i);
-        break;
-      }
+  if (!result.variation) result.variation = "v1";
+
+  // --- Product: BULB or SPHERE ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    const tl = tokens[i].toLowerCase();
+    if (tl === "bulb") { result.product = "BULB"; claimed.add(i); break; }
+    if (tl === "sphere") { result.product = "SPHERE"; claimed.add(i); break; }
+  }
+
+  // --- Copy slug: C-prefixed tokens ---
+  for (let i = 0; i < tokens.length; i++) {
+    if (claimed.has(i)) continue;
+    if (/^C-/i.test(tokens[i])) {
+      result.copySlug = tokens[i];
+      claimed.add(i);
+      break;
     }
   }
 
-  // --- Claim creative type keywords so they don't end up in the angle ---
-  const CREATIVE_TYPE_WORDS = new Set(["stills", "still", "static", "ugc", "meme", "gfx", "motion", "mashup", "screen", "testi", "ai_gen", "catalog", "carousel"]);
+  // --- Claim creative style keywords ---
+  const CREATIVE_WORDS = new Set(["ugc", "hifi", "lofi", "gfx", "motion", "mashup", "meme", "screen", "photo", "ai", "demo", "static", "stills", "still"]);
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
-    if (CREATIVE_TYPE_WORDS.has(tokens[i].toLowerCase())) {
-      claimed.add(i);
-    }
+    if (CREATIVE_WORDS.has(tokens[i].toLowerCase())) claimed.add(i);
   }
 
   // --- Claim dimension keyword tokens ---
   const DIM_WORDS = new Set(["story", "stories", "reel", "vertical", "landscape", "horizontal", "wide", "square", "feed"]);
   for (let i = 0; i < tokens.length; i++) {
     if (claimed.has(i)) continue;
-    if (DIM_WORDS.has(tokens[i].toLowerCase())) {
-      claimed.add(i);
+    if (DIM_WORDS.has(tokens[i].toLowerCase())) claimed.add(i);
+  }
+
+  // --- Remaining unclaimed tokens → could be theme ---
+  if (!result.angle) {
+    const remainingTokens: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      if (!claimed.has(i)) remainingTokens.push(tokens[i]);
+    }
+    if (remainingTokens.length > 0) {
+      result.angle = remainingTokens
+        .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+        .join("");
     }
   }
 
-  // --- Remaining unclaimed tokens = angle ---
-  const angleTokens: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    if (!claimed.has(i)) {
-      angleTokens.push(tokens[i]);
-    }
-  }
-  if (angleTokens.length > 0) {
-    // Join with hyphens for readability, capitalise first letter of each word
-    result.angle = angleTokens
-      .map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
-      .join("-");
-  }
+  // --- Default creative style ---
+  if (!result.creativeType) result.creativeType = "UGC";
 
-  // --- creativeType default ---
-  if (!result.creativeType) result.creativeType = "ESTATIC";
+  // --- Default handle ---
+  if (!result.handle) result.handle = "korruscircadian";
 
   // --- Filename: cleanName minus the dimension token ---
   if (result.dimensions) {
@@ -291,7 +341,7 @@ export function parseFilenameToFields(
 }
 
 export interface UploadRow {
-  brand: string;
+  handle: string;
   initiative: string;
   variation: string;
   angle: string;
@@ -303,6 +353,7 @@ export interface UploadRow {
   copySlug: string;
   filename: string;
   date: string;
+  brand: string;
   adSetId?: string | null;
   fileUrl?: string | null;
   destinationUrl?: string | null;
@@ -315,27 +366,19 @@ export function validateUploadRow(
 ): string[] {
   const errors: string[] = [];
 
-  const namingFields: (keyof AdNameFields)[] = [
-    "brand",
-    "initiative",
-    "variation",
-    "angle",
-    "source",
-    "product",
-    "contentType",
-    "creativeType",
-    "dimensions",
-    "copySlug",
-    "filename",
-    "date",
+  // Required fields for a complete ad name
+  const required: (keyof UploadRow)[] = [
+    "handle", "initiative", "variation", "angle", "source",
+    "product", "contentType", "creativeType", "dimensions",
+    "copySlug", "date",
   ];
-  for (const f of namingFields) {
-    if (!row[f]?.trim()) errors.push(`${f} is required`);
+  for (const f of required) {
+    if (!row[f]?.toString().trim()) errors.push(`${f} is required`);
   }
 
-  const validContentTypes = ["VID", "IMG", "CAR", "GIF"];
+  const validContentTypes = ["VID", "IMG", "CAR"];
   if (row.contentType && !validContentTypes.includes(row.contentType)) {
-    errors.push(`Invalid content type: ${row.contentType}`);
+    errors.push(`Invalid ad format: ${row.contentType}`);
   }
 
   const validDims = ["9:16", "4:5", "1:1", "16:9"];
@@ -346,10 +389,6 @@ export function validateUploadRow(
   if (forUpload) {
     if (!row.adSetId?.trim()) errors.push("Ad Set ID is required for upload");
     if (!row.fileUrl?.trim()) errors.push("File URL is required for upload");
-  }
-
-  if (row.destinationUrl && !row.destinationUrl.includes("korrus.com")) {
-    errors.push("Destination URL must contain korrus.com");
   }
 
   return errors;

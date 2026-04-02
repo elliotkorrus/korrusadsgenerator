@@ -3,10 +3,11 @@ import { trpc } from "../lib/trpc";
 import { Plus, Pencil, Trash2, X } from "lucide-react";
 
 const FIELD_GROUPS = [
-  { field: "source", label: "Source", description: "Traffic source or creative origin" },
+  { field: "angle", label: "Theme", description: "Marketing angle / hook for the creative" },
+  { field: "creativeType", label: "Creative Style", description: "Execution style of the creative (UGC, HIFI, etc.)" },
+  { field: "source", label: "Producer", description: "Who produced the creative asset" },
+  { field: "contentType", label: "Ad Format", description: "File type of the creative asset (IMG, VID, CAR)" },
   { field: "product", label: "Product", description: "Product line this ad promotes" },
-  { field: "contentType", label: "Format", description: "File type of the creative asset" },
-  { field: "creativeType", label: "Creative Type", description: "Execution style of the creative" },
   { field: "dimensions", label: "Dimensions", description: "Ad placement aspect ratios" },
 ];
 

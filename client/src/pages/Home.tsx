@@ -96,11 +96,11 @@ function conceptMissing(existingDims: Set<string>): { missingStory: boolean; mis
 
 const BATCH_EDITABLE_FIELDS = [
   { key: "initiative", label: "Initiative" },
-  { key: "angle", label: "Angle" },
-  { key: "source", label: "Source" },
+  { key: "angle", label: "Theme" },
+  { key: "creativeType", label: "Style" },
+  { key: "source", label: "Producer" },
   { key: "product", label: "Product" },
   { key: "date", label: "Date" },
-  { key: "brand", label: "Brand" },
   { key: "variation", label: "Variation" },
   { key: "copySlug", label: "Copy Slug" },
 ] as const;
@@ -200,8 +200,8 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 // ── CSV Export ────────────────────────────────────────────────────
 function exportCSV(items: QueueItem[]) {
   const headers = [
-    "Ad Name", "Brand", "Initiative", "Variation", "Angle", "Source",
-    "Product", "Format", "Type", "Dimensions", "Copy", "Filename",
+    "Ad Name", "Handle", "Initiative", "Variation", "Theme", "Style",
+    "Producer", "Product", "Format", "Dimensions", "Copy", "Filename",
     "Date", "Status", "Handle", "File URL",
     "Ad Set ID", "Ad Set Name", "Destination URL", "Display URL", "CTA",
     "Headline", "Body Copy",
@@ -247,8 +247,8 @@ function StatusChecklist({ errors }: { errors: string[] }) {
   const ALL_CHECKS = [
     { label: "File attached", key: "File URL" },
     { label: "Initiative", key: "initiative" },
-    { label: "Angle", key: "angle" },
-    { label: "Source", key: "source" },
+    { label: "Theme", key: "angle" },
+    { label: "Producer", key: "source" },
     { label: "Product", key: "product" },
     { label: "Brand", key: "brand" },
     { label: "Variation", key: "variation" },
@@ -516,10 +516,10 @@ function ConceptCard({
               { label: "Brand", el: <InlineText value={shared.brand || ""} onSave={(v) => onUpdateField("brand", v)} disabled={isGroupLocked} placeholder="OIO" /> },
               { label: "Initiative", el: <InlineText value={shared.initiative || ""} onSave={(v) => onUpdateField("initiative", v)} disabled={isGroupLocked} placeholder="s_001" /> },
               { label: "Variation", el: <InlineText value={shared.variation || ""} onSave={(v) => onUpdateField("variation", v)} disabled={isGroupLocked} placeholder="v1" /> },
-              { label: "Angle", el: angleOptions.length > 0 ? <InlineSelect value={shared.angle || ""} options={angleOptions} onSave={(v) => onUpdateField("angle", v)} disabled={isGroupLocked} /> : <InlineText value={shared.angle || ""} onSave={(v) => onUpdateField("angle", v)} disabled={isGroupLocked} placeholder="angle" /> },
-              { label: "Source", el: <InlineSelect value={shared.source || ""} options={sourceOpts} onSave={(v) => onUpdateField("source", v)} disabled={isGroupLocked} /> },
+              { label: "Theme", el: angleOptions.length > 0 ? <InlineSelect value={shared.angle || ""} options={angleOptions} onSave={(v) => onUpdateField("angle", v)} disabled={isGroupLocked} /> : <InlineText value={shared.angle || ""} onSave={(v) => onUpdateField("angle", v)} disabled={isGroupLocked} placeholder="theme" /> },
+              { label: "Producer", el: <InlineSelect value={shared.source || ""} options={sourceOpts} onSave={(v) => onUpdateField("source", v)} disabled={isGroupLocked} /> },
               { label: "Product", el: <InlineSelect value={shared.product || ""} options={productOpts} onSave={(v) => onUpdateField("product", v)} disabled={isGroupLocked} /> },
-              { label: "Format", el: <InlineSelect value={shared.contentType || ""} options={contentTypeOpts} onSave={(v) => onUpdateField("contentType", v)} disabled={isGroupLocked} /> },
+              { label: "Ad Format", el: <InlineSelect value={shared.contentType || ""} options={contentTypeOpts} onSave={(v) => onUpdateField("contentType", v)} disabled={isGroupLocked} /> },
               { label: "Type", el: <InlineSelect value={shared.creativeType || ""} options={creativeTypeOpts} onSave={(v) => onUpdateField("creativeType", v)} disabled={isGroupLocked} /> },
               { label: "Copy", el: <InlineSelect value={shared.copySlug || ""} options={copyOptions} onSave={(v) => onUpdateField("copySlug", v)} disabled={isGroupLocked} /> },
               { label: "Filename", el: <InlineText value={shared.filename || ""} onSave={(v) => onUpdateField("filename", v)} disabled={isGroupLocked} mono placeholder="filename" /> },
@@ -1640,10 +1640,10 @@ export default function Home() {
                   <th className="px-1 py-2 w-6"></th>
                   {/* Feature 8: thumbnail column */}
                   <th className="px-2 py-2 w-12" style={{ fontSize: "10px", letterSpacing: "0.08em", color: "var(--text-muted)" }}></th>
-                  {(["Status", "Concept Name", "Brand", "Initiative", "Var.", "Angle", "Source", "Product", "Format", "Type", "Copy", "Filename", "Date", "Sizes", "Ad Set", "Dest URL", "CTA", "Handle", "Actions"] as const).map((label) => (
+                  {(["Status", "Concept Name", "Handle", "Initiative", "Var.", "Theme", "Style", "Producer", "Product", "Format", "Copy", "Filename", "Date", "Sizes", "Ad Set", "Dest URL", "CTA", "Actions"] as const).map((label) => (
                     <th
                       key={label}
-                      className={`px-3 py-2 text-left whitespace-nowrap uppercase font-semibold${label === "Concept Name" ? " min-w-[220px]" : label === "Initiative" ? " min-w-[120px]" : label === "Angle" ? " min-w-[110px]" : label === "Type" ? " min-w-[90px]" : label === "Filename" ? " min-w-[100px]" : label === "Sizes" ? " min-w-[100px]" : label === "Ad Set" ? " min-w-[110px]" : label === "Dest URL" ? " min-w-[120px]" : ""}`}
+                      className={`px-3 py-2 text-left whitespace-nowrap uppercase font-semibold${label === "Concept Name" ? " min-w-[220px]" : label === "Initiative" ? " min-w-[120px]" : label === "Theme" ? " min-w-[110px]" : label === "Style" ? " min-w-[90px]" : label === "Filename" ? " min-w-[100px]" : label === "Sizes" ? " min-w-[100px]" : label === "Ad Set" ? " min-w-[110px]" : label === "Dest URL" ? " min-w-[120px]" : ""}`}
                       style={{ fontSize: "10px", letterSpacing: "0.08em", color: "var(--text-muted)" }}
                     >
                       {label}
@@ -2330,13 +2330,13 @@ function AddAdDialog({
   const [form, setForm] = useState({
     brand: "OIO",
     initiative: "",
-    variation: "V1",
+    variation: "v1",
     angle: "",
-    source: "Studio",
-    product: "OIO",
-    contentType: "IMG",
-    creativeType: "ESTATIC",
-    dimensions: "1:1",
+    source: "",
+    product: "BULB",
+    contentType: "VID",
+    creativeType: "UGC",
+    dimensions: "9:16",
     copySlug: "",
     filename: "",
     date: getTodayMMDDYY(),
@@ -2468,10 +2468,10 @@ function AddAdDialog({
           <FormInput label="Brand" value={form.brand} onChange={(v) => setForm({ ...form, brand: v })} />
           <FormInput label="Initiative" value={form.initiative} onChange={(v) => setForm({ ...form, initiative: v })} />
           <FormInput label="Variation" value={form.variation} onChange={(v) => setForm({ ...form, variation: v })} />
-          <FormSelect label="Angle" value={form.angle} options={angleOptions} onChange={(v) => setForm({ ...form, angle: v })} />
-          <FormSelect label="Source" value={form.source} options={sourceOpts} onChange={(v) => setForm({ ...form, source: v })} />
+          <FormSelect label="Theme" value={form.angle} options={angleOptions} onChange={(v) => setForm({ ...form, angle: v })} />
+          <FormSelect label="Producer" value={form.source} options={sourceOpts} onChange={(v) => setForm({ ...form, source: v })} />
           <FormSelect label="Product" value={form.product} options={productOpts} onChange={(v) => setForm({ ...form, product: v })} />
-          <FormSelect label="Format" value={form.contentType} options={contentTypeOpts} onChange={(v) => setForm({ ...form, contentType: v })} />
+          <FormSelect label="Ad Format" value={form.contentType} options={contentTypeOpts} onChange={(v) => setForm({ ...form, contentType: v })} />
           <FormSelect label="Type" value={form.creativeType} options={creativeTypeOpts} onChange={(v) => setForm({ ...form, creativeType: v })} />
           <FormSelect label="Dimensions" value={form.dimensions} options={dimsOpts} onChange={(v) => setForm({ ...form, dimensions: v })} />
           <FormSelect

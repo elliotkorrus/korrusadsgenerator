@@ -3,10 +3,10 @@ import { Copy, Check } from "lucide-react";
 
 const FIELDS = [
   {
-    position: 1, key: "brand", label: "Brand", example: "OIO", color: "#60A7C8",
-    description: "Always OIO. The ad-facing product brand.",
-    rules: ["Always OIO — never KORRUS or anything else", "KORRUS is the company; OIO is the brand consumers see"],
-    options: ["OIO"],
+    position: 1, key: "handle", label: "Handle", example: "korruscircadian", color: "#60A7C8",
+    description: "The Instagram handle. Always korruscircadian.",
+    rules: ["Always korruscircadian", "First field in the ad name"],
+    options: ["korruscircadian"],
     fixed: true,
   },
   {
@@ -19,80 +19,72 @@ const FIELDS = [
   {
     position: 3, key: "variation", label: "Variation", example: "v1", color: "#34d399",
     description: "Creative variant within the same concept.",
-    rules: ["v + number: v1, v2, v3…", "Same angle + copy = same variation number", "New creative direction → new variation number"],
+    rules: ["v + number: v1, v2, v3…", "Same theme + copy = same variation number", "New creative direction → new variation number"],
     options: ["v1", "v2", "v3", "v4", "v5"],
     fixed: false,
   },
   {
-    position: 4, key: "angle", label: "Angle", example: "RedditQ&A", color: "#f59e0b",
-    description: "The marketing angle or hook. Comes from Angle Bank.",
-    rules: ["No spaces — use CamelCase or hyphens", "Must match an entry in Angle Bank", "Describes the emotional/logical hook, not the format"],
-    options: ["RedditQ&A", "SocialProof", "ProblemAgitate", "EducationFirst", "BeforeAfter"],
+    position: 4, key: "angle", label: "Theme", example: "SocialProof", color: "#f59e0b",
+    description: "The marketing angle or hook. 13 predefined themes.",
+    rules: ["CamelCase, no spaces", "Must match a predefined theme", "Describes the emotional/logical hook, not the format"],
+    options: ["BeforeAfter", "Curiosity", "Education", "FeaturesBenefits", "Founder", "Lifestyle", "MediaPress", "MythBusting", "ProblemSolution", "Promotion", "SocialProof", "Unboxing", "UsVsThem"],
     fixed: false,
   },
   {
-    position: 5, key: "source", label: "Source", example: "NG", color: "#fb923c",
-    description: "Traffic source or creative origin.",
-    rules: ["NG = No Growth (organic seeding)", "PAID = paid media", "UGC = user-generated content creator", "STUDIO = in-house studio", "STOCK = stock asset", "AI = AI-generated creative"],
-    options: ["NG", "PAID", "UGC", "STUDIO", "STOCK", "AI"],
-    fixed: false,
-  },
-  {
-    position: 6, key: "product", label: "Product", example: "OIO", color: "#38bdf8",
-    description: "Which product line this ad is for.",
-    rules: ["OIO = OIO circadian bulb", "SERUM = future product line"],
-    options: ["OIO", "SERUM"],
-    fixed: false,
-  },
-  {
-    position: 7, key: "contentType", label: "Format", example: "IMG", color: "#e879f9",
-    description: "File format of the creative asset.",
-    rules: ["IMG = static image (JPG, PNG, WEBP)", "VID = video (MP4, MOV)", "GIF = animated GIF", "CAR = carousel (multi-image)"],
-    options: ["IMG", "VID", "GIF", "CAR"],
-    fixed: false,
-  },
-  {
-    position: 8, key: "creativeType", label: "Type", example: "ESTATIC", color: "#4ade80",
+    position: 5, key: "creativeType", label: "Creative Style", example: "UGC", color: "#4ade80",
     description: "Creative execution style.",
-    rules: ["ESTATIC = elevated static", "UGC = user-generated content style", "MEME = meme format", "GFX = motion graphics", "MASHUP = mixed media", "TESTI = testimonial", "AI = AI-generated imagery"],
-    options: ["ESTATIC", "UGC", "MEME", "GFX", "MASHUP", "TESTI", "AI"],
+    rules: ["UGC = user-generated content style", "HIFI = high fidelity / polished", "LOFI = low fidelity / raw", "GFX = motion graphics", "MASHUP = mixed media", "MEME = meme format", "SCREEN = screenshot", "PHOTO = photography", "AI = AI-generated", "DEMO = product demo"],
+    options: ["UGC", "HIFI", "LOFI", "GFX", "MASHUP", "MEME", "SCREEN", "PHOTO", "AI", "DEMO"],
     fixed: false,
   },
   {
-    position: 9, key: "dimensions", label: "Dims", example: "1x1", color: "#94a3b8",
+    position: 6, key: "source", label: "Producer", example: "NG", color: "#fb923c",
+    description: "Who produced the creative asset.",
+    rules: ["NG = No Growth", "SCL = Scalable Media", "RED = Real Eyes Media", "IHO = In-House Organic", "IHP = In-House Paid", "WL = Whitelisting"],
+    options: ["NG", "SCL", "RED", "IHO", "IHP", "WL"],
+    fixed: false,
+  },
+  {
+    position: 7, key: "contentType", label: "Ad Format", example: "VID", color: "#e879f9",
+    description: "File format of the creative asset.",
+    rules: ["IMG = static image (JPG, PNG, WEBP)", "VID = video (MP4, MOV)", "CAR = carousel (multi-image)"],
+    options: ["IMG", "VID", "CAR"],
+    fixed: false,
+  },
+  {
+    position: 8, key: "dimensions", label: "Dims", example: "9x16", color: "#94a3b8",
     description: "Ad placement dimensions. Auto-detected from image pixel size on drop.",
-    rules: ["9x16 = vertical Stories / Reels", "1x1 = square Feed", "4x5 = portrait Feed", "16x9 = horizontal / landscape", "Colon replaced with x in the name (9:16 → 9x16)"],
-    options: ["9x16", "1x1", "4x5", "16x9"],
+    rules: ["9x16 = vertical Stories / Reels", "4x5 = portrait Feed", "1x1 = square Feed", "16x9 = horizontal / landscape", "Colon replaced with x in the name (9:16 → 9x16)"],
+    options: ["9x16", "4x5", "1x1", "16x9"],
     fixed: false,
   },
   {
-    position: 10, key: "copySlug", label: "Copy", example: "RQA-SleepStruggles", color: "#f472b6",
+    position: 9, key: "copySlug", label: "Copy", example: "C-BlueLight", color: "#f472b6",
     description: "Identifies the specific ad copy variant. Links to an entry in Copy Library.",
-    rules: ["Must match a copy_slug in Copy Library", "Format: ANGLE-ShortDescriptor", "No spaces — use hyphens", "Required before marking an ad Ready"],
-    options: ["RQA-SleepStruggles", "RQA-ReliableSetup", "RQA-CircadianDisorder", "RQA-TriedEveryBulb", "RQA-BlueLight"],
+    rules: ["C- prefix followed by descriptor", "Must match a copy_slug in Copy Library", "No spaces — use hyphens after the C-", "Required before marking an ad Ready"],
+    options: ["C-BlueLight", "C-TriedEveryBulb", "C-CircadianDisorder", "C-ReliableSetup", "C-SleepStruggles"],
     fixed: false,
   },
   {
-    position: 11, key: "filename", label: "Filename", example: "korrus_s_004_1_RedditQ&A_ng_2026-03", color: "#a3a3a3",
-    description: "Source filename without extension and without the size token. Auto-parsed on drop.",
-    rules: ["Stripped of file extension (.png, .mp4, etc.)", "Stripped of dimension token — size is in Dims field", "Preserves original filename structure for traceability"],
-    options: [],
+    position: 10, key: "product", label: "Product", example: "BULB", color: "#38bdf8",
+    description: "Which product line this ad is for.",
+    rules: ["BULB = OIO circadian bulb", "SPHERE = OIO Sphere"],
+    options: ["BULB", "SPHERE"],
     fixed: false,
   },
   {
-    position: 12, key: "date", label: "Date", example: "2026-03", color: "#71717a",
-    description: "Month the creative was produced. Format: YYYY-MM.",
-    rules: ["YYYY-MM format only — no day", "Auto-parsed from filename if present", "Defaults to current month on drop"],
+    position: 11, key: "date", label: "Date", example: "0402", color: "#71717a",
+    description: "Date the creative was produced. Format: MMDD.",
+    rules: ["MMDD format — 4 digits", "Auto-parsed from filename if present", "Defaults to current date on drop"],
     options: [],
     fixed: false,
   },
 ];
 
 const DEFAULT_VALUES: Record<string, string> = {
-  brand: "OIO", initiative: "s_004", variation: "v1", angle: "RedditQ&A",
-  source: "NG", product: "OIO", contentType: "IMG", creativeType: "ESTATIC",
-  dimensions: "1x1", copySlug: "RQA-SleepStruggles",
-  filename: "korrus_s_004_1_RedditQ&A_ng_2026-03", date: "2026-03",
+  handle: "korruscircadian", initiative: "s_004", variation: "v1", angle: "SocialProof",
+  creativeType: "UGC", source: "NG", contentType: "VID", dimensions: "9x16",
+  copySlug: "C-BlueLight", product: "BULB", date: "0402",
 };
 
 function CopyBtn({ text }: { text: string }) {
@@ -127,7 +119,7 @@ export default function NamingGuide() {
       <div className="flex-shrink-0 px-6 py-4" style={{ borderBottom: "1px solid var(--surface-3)" }}>
         <h2 className="font-semibold" style={{ fontSize: "15px", letterSpacing: "-0.01em", color: "var(--text-primary)" }}>Naming Guide</h2>
         <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
-          12-field ad naming convention — edit any field below to preview the full name live
+          11-field ad naming convention: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Dims__Copy__Product__Date
         </p>
       </div>
 

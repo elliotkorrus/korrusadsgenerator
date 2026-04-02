@@ -123,6 +123,7 @@ export default function DetailDrawer({
 
   // Build live ad name preview from current fields
   const adNamePreview = generateAdName({
+    handle: item.handle || "korruscircadian",
     brand: item.brand,
     initiative: item.initiative,
     variation: item.variation,
@@ -392,11 +393,11 @@ export default function DetailDrawer({
           <div style={{ borderTop: "1px solid var(--surface-2)", marginBottom: "16px" }} />
 
           {/* Form fields */}
-          {/* Row 1: Brand + Product */}
+          {/* Row 1: Handle + Product */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
             <div>
-              <div style={labelStyle}>Brand</div>
-              {renderTextInput("brand", item.brand, true)}
+              <div style={labelStyle}>Handle</div>
+              {renderTextInput("handle", item.handle || "korruscircadian")}
             </div>
             <div>
               <div style={labelStyle}>Product</div>
@@ -416,27 +417,27 @@ export default function DetailDrawer({
             </div>
           </div>
 
-          {/* Row 3: Angle + Source */}
+          {/* Row 3: Theme + Creative Style */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
             <div>
-              <div style={labelStyle}>Angle</div>
+              <div style={labelStyle}>Theme</div>
               {renderSelect("angle", "angle", item.angle)}
             </div>
             <div>
-              <div style={labelStyle}>Source</div>
-              {renderSelect("source", "source", item.source)}
+              <div style={labelStyle}>Creative Style</div>
+              {renderSelect("creativeType", "creativeType", item.creativeType)}
             </div>
           </div>
 
-          {/* Row 4: Content Type + Creative Type */}
+          {/* Row 4: Producer + Ad Format */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
             <div>
-              <div style={labelStyle}>Content Type</div>
-              {renderSelect("contentType", "contentType", item.contentType)}
+              <div style={labelStyle}>Producer</div>
+              {renderSelect("source", "source", item.source)}
             </div>
             <div>
-              <div style={labelStyle}>Creative Type</div>
-              {renderSelect("creativeType", "creativeType", item.creativeType)}
+              <div style={labelStyle}>Ad Format</div>
+              {renderSelect("contentType", "contentType", item.contentType)}
             </div>
           </div>
 

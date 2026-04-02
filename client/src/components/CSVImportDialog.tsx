@@ -24,11 +24,11 @@ const MAPPABLE_FIELDS = [
   { key: "brand", label: "Brand" },
   { key: "initiative", label: "Initiative" },
   { key: "variation", label: "Variation" },
-  { key: "angle", label: "Angle" },
-  { key: "source", label: "Source" },
+  { key: "angle", label: "Theme" },
+  { key: "source", label: "Producer" },
   { key: "product", label: "Product" },
-  { key: "contentType", label: "Format (VID/IMG)" },
-  { key: "creativeType", label: "Creative Type" },
+  { key: "contentType", label: "Ad Format (VID/IMG/CAR)" },
+  { key: "creativeType", label: "Creative Style" },
   { key: "dimensions", label: "Dimensions" },
   { key: "copySlug", label: "Copy Slug" },
   { key: "filename", label: "Filename" },
@@ -912,6 +912,7 @@ export default function CSVImportDialog({ onImport, onClose }: CSVImportDialogPr
                 let adName = "";
                 try {
                   adName = generateAdName({
+                    handle: row.handle || "korruscircadian",
                     brand,
                     initiative,
                     variation,

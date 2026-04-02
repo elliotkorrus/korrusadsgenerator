@@ -46,18 +46,17 @@ interface ConceptGroup {
 
 // ─── Column definitions ──────────────────────────────────────────
 const COLUMNS: { key: string; label: string; width: string; type: "text" | "select" | "readonly" }[] = [
-  { key: "brand", label: "Brand", width: "65px", type: "text" },
+  { key: "handle", label: "Handle", width: "80px", type: "text" },
   { key: "initiative", label: "Init.", width: "80px", type: "text" },
   { key: "variation", label: "Var.", width: "50px", type: "text" },
-  { key: "angle", label: "Angle", width: "100px", type: "select" },
-  { key: "source", label: "Source", width: "90px", type: "select" },
-  { key: "product", label: "Product", width: "75px", type: "select" },
+  { key: "angle", label: "Theme", width: "100px", type: "select" },
+  { key: "creativeType", label: "Style", width: "80px", type: "select" },
+  { key: "source", label: "Producer", width: "90px", type: "select" },
   { key: "contentType", label: "Format", width: "70px", type: "select" },
-  { key: "creativeType", label: "Type", width: "80px", type: "select" },
+  { key: "product", label: "Product", width: "75px", type: "select" },
   { key: "copySlug", label: "Copy", width: "90px", type: "select" },
   { key: "filename", label: "Filename", width: "100px", type: "text" },
   { key: "date", label: "Date", width: "75px", type: "text" },
-  { key: "handle", label: "Handle", width: "80px", type: "text" },
   { key: "agency", label: "Agency", width: "75px", type: "text" },
 ];
 
