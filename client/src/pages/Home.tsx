@@ -948,9 +948,13 @@ export default function Home() {
   async function sendToMeta(id: number) {
     setSendingIds((prev) => new Set(prev).add(id));
     try {
+      const metaToken = localStorage.getItem("app-token");
       const res = await fetch("/api/send-to-meta", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(metaToken ? { "x-app-token": metaToken } : {}),
+        },
         body: JSON.stringify({ adId: id }),
       });
       const data = await res.json();

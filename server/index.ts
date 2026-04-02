@@ -29,33 +29,36 @@ app.use("/api", authMiddleware);
 // Serve uploaded files
 app.use("/uploads", express.static(uploadsDir));
 
-// File upload endpoint
-const storage = multer.diskStorage({
-  destination: uploadsDir,
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname);
-    cb(null, `${unique}${ext}`);
-  },
-});
-const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } });
+// File upload endpoint — stores in memory, returns base64 data URI
+// This avoids Railway's ephemeral disk (files lost on redeploy)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.post("/api/upload", upload.single("file"), (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "No file provided" });
     return;
   }
-  const fileUrl = `/uploads/${req.file.filename}`;
+  // Convert to base64 data URI — stored in Postgres, survives redeploys
+  const base64 = req.file.buffer.toString("base64");
+  const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+  const fileKey = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(req.file.originalname)}`;
+
+  // Also save to disk as a fallback for local dev
+  try {
+    const { writeFileSync } = require("fs");
+    writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
+  } catch { /* ignore in production */ }
+
   res.json({
-    fileUrl,
-    fileKey: req.file.filename,
+    fileUrl: dataUri,
+    fileKey,
     fileMimeType: req.file.mimetype,
     fileSize: req.file.size,
     originalName: req.file.originalname,
   });
 });
 
-// Download a remote file to local uploads/ and return its metadata
+// Download a remote file and return as base64 data URI
 app.post("/api/download-from-url", express.json(), async (req, res) => {
   const { url } = req.body as { url: string };
   if (!url) { res.status(400).json({ error: "url required" }); return; }
@@ -65,21 +68,14 @@ app.post("/api/download-from-url", express.json(), async (req, res) => {
     const contentType = response.headers.get("content-type") || "application/octet-stream";
     const ext = url.split("?")[0].split(".").pop() || "bin";
     const filename = `${Date.now()}-${Math.round(Math.random() * 1e6)}.${ext}`;
-    const dest = path.join(uploadsDir, filename);
-    const { createWriteStream } = await import("fs");
-    const fileStream = createWriteStream(dest);
-    const { Readable } = await import("stream");
-    await new Promise((resolve, reject) => {
-      Readable.fromWeb(response.body as any).pipe(fileStream);
-      fileStream.on("finish", resolve);
-      fileStream.on("error", reject);
-    });
-    const stat = (await import("fs")).statSync(dest);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const base64 = buffer.toString("base64");
+    const dataUri = `data:${contentType};base64,${base64}`;
     res.json({
-      fileUrl: `/uploads/${filename}`,
+      fileUrl: dataUri,
       fileKey: filename,
       fileMimeType: contentType,
-      fileSize: stat.size,
+      fileSize: buffer.length,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
