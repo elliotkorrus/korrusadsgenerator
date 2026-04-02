@@ -27,9 +27,12 @@ export function InlineText({ value, onSave, disabled, className, mono, placehold
     return (
       <span
         onClick={() => setEditing(true)}
-        className={`cursor-pointer hover:bg-zinc-800 px-1 -mx-1 rounded ${className || ""} ${mono ? "font-mono" : ""}`}
+        className={`cursor-pointer px-1 -mx-1 rounded ${className || ""} ${mono ? "font-mono" : ""}`}
+        style={{ transition: "background 0.1s" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLSpanElement).style.background = "var(--surface-2)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLSpanElement).style.background = "transparent"; }}
       >
-        {value || <span className="text-zinc-600 italic">{placeholder || "—"}</span>}
+        {value || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>{placeholder || "—"}</span>}
       </span>
     );
   }
@@ -55,7 +58,8 @@ export function InlineText({ value, onSave, disabled, className, mono, placehold
           setDraft(value);
         }
       }}
-      className={`bg-zinc-800 border border-brand/50 rounded px-1.5 py-0.5 text-sm w-full outline-none ${mono ? "font-mono" : ""}`}
+      className={`rounded px-1.5 py-0.5 text-sm w-full outline-none ${mono ? "font-mono" : ""}`}
+      style={{ background: "var(--surface-0)", border: "1px solid rgba(0,153,198,0.4)", color: "var(--text-primary)" }}
     />
   );
 }
@@ -85,9 +89,12 @@ export function InlineSelect({ value, options, onSave, disabled }: InlineSelectP
     return (
       <span
         onClick={() => setEditing(true)}
-        className="cursor-pointer hover:bg-zinc-800 px-1 -mx-1 rounded"
+        className="cursor-pointer px-1 -mx-1 rounded"
+        style={{ transition: "background 0.1s" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLSpanElement).style.background = "var(--surface-2)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLSpanElement).style.background = "transparent"; }}
       >
-        {label || <span className="text-zinc-600">—</span>}
+        {label || <span style={{ color: "var(--text-muted)" }}>—</span>}
       </span>
     );
   }
@@ -101,7 +108,8 @@ export function InlineSelect({ value, options, onSave, disabled }: InlineSelectP
         setEditing(false);
       }}
       onBlur={() => setEditing(false)}
-      className="bg-zinc-800 border border-brand/50 rounded px-1 py-0.5 text-sm outline-none"
+      className="rounded px-1 py-0.5 text-sm outline-none"
+      style={{ background: "var(--surface-0)", border: "1px solid rgba(0,153,198,0.4)", color: "var(--text-primary)" }}
     >
       <option value="">—</option>
       {options.map((o) => (

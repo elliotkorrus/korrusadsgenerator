@@ -14,6 +14,13 @@ const CTA_OPTIONS = [
   { value: "NO_BUTTON", label: "No Button" },
 ];
 
+const inputClass = "w-full rounded-lg px-3 py-2 text-sm focus:outline-none font-mono";
+const inputStyle: React.CSSProperties = {
+  background: "var(--surface-0)",
+  border: "1px solid var(--surface-2)",
+  color: "var(--text-primary)",
+};
+
 export default function MetaSettings() {
   const { data: settings } = trpc.meta.get.useQuery();
   const updateMut = trpc.meta.update.useMutation();
@@ -56,13 +63,14 @@ export default function MetaSettings() {
   }
 
   return (
-    <div className="p-6 max-w-2xl">
-      <h2 className="text-xl font-semibold mb-6">Meta Settings</h2>
+    <div className="p-6 max-w-2xl" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
+      <h2 className="text-xl font-semibold mb-1" style={{ color: "var(--text-primary)" }}>Meta Settings</h2>
+      <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>API credentials and upload defaults for Meta Ads Manager.</p>
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* API Credentials */}
-        <div className="border border-zinc-800 rounded-lg p-5 space-y-4">
-          <h3 className="text-sm font-medium text-zinc-300">API Credentials</h3>
+        <div className="rounded-lg p-5 space-y-4" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-2)", boxShadow: "var(--shadow-sm)" }}>
+          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>API Credentials</h3>
           {[
             { key: "appId", label: "App ID", sensitive: false },
             { key: "appSecret", label: "App Secret", sensitive: true },
@@ -71,76 +79,82 @@ export default function MetaSettings() {
             { key: "pageId", label: "Page ID", sensitive: false },
           ].map(({ key, label, sensitive, placeholder }) => (
             <div key={key}>
-              <label className="block text-xs text-zinc-400 mb-1">{label}</label>
+              <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>{label}</label>
               <input
                 type={sensitive ? "password" : "text"}
                 value={(form as any)[key]}
                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
                 placeholder={placeholder || label}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono"
+                className={inputClass}
+                style={inputStyle}
               />
             </div>
           ))}
         </div>
 
         {/* Upload Defaults */}
-        <div className="border border-zinc-800 rounded-lg p-5 space-y-4">
-          <h3 className="text-sm font-medium text-zinc-300">Upload Defaults</h3>
-          <p className="text-xs text-zinc-500">
+        <div className="rounded-lg p-5 space-y-4" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-2)", boxShadow: "var(--shadow-sm)" }}>
+          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Upload Defaults</h3>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
             These values auto-populate new ads. Each ad can override them individually.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Instagram User ID</label>
+              <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Instagram User ID</label>
               <input
                 type="text"
                 value={form.instagramUserId}
                 onChange={(e) => setForm({ ...form, instagramUserId: e.target.value })}
                 placeholder="17841456289857293"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono"
+                className={inputClass}
+                style={inputStyle}
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Instagram Handle</label>
+              <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Instagram Handle</label>
               <input
                 type="text"
                 value={form.instagramHandle}
                 onChange={(e) => setForm({ ...form, instagramHandle: e.target.value })}
                 placeholder="korruscircadian"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono"
+                className={inputClass}
+                style={inputStyle}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">Default Destination URL</label>
+            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Default Destination URL</label>
             <input
               type="text"
               value={form.defaultDestinationUrl}
               onChange={(e) => setForm({ ...form, defaultDestinationUrl: e.target.value })}
               placeholder="https://www.korrus.com/collections/store"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono"
+              className={inputClass}
+              style={inputStyle}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Default Display Link</label>
+              <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Default Display Link</label>
               <input
                 type="text"
                 value={form.defaultDisplayUrl}
                 onChange={(e) => setForm({ ...form, defaultDisplayUrl: e.target.value })}
                 placeholder="korrus.com"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono"
+                className={inputClass}
+                style={inputStyle}
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">Default CTA</label>
+              <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Default CTA</label>
               <select
                 value={form.defaultCta}
                 onChange={(e) => setForm({ ...form, defaultCta: e.target.value })}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand"
+                className={inputClass}
+                style={inputStyle}
               >
                 {CTA_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -150,15 +164,16 @@ export default function MetaSettings() {
           </div>
 
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">UTM Template</label>
+            <label className="block text-xs mb-1" style={{ color: "var(--text-secondary)" }}>UTM Template</label>
             <textarea
               value={form.utmTemplate}
               onChange={(e) => setForm({ ...form, utmTemplate: e.target.value })}
               placeholder="utm_source=facebook&utm_medium=paidsocial&utm_campaign={{campaign.name}}..."
               rows={3}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand font-mono leading-relaxed"
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none font-mono leading-relaxed"
+              style={inputStyle}
             />
-            <p className="text-[10px] text-zinc-600 mt-1">
+            <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
               Use {"{{...}}"} for Meta dynamic macros. This is appended to destination URLs on upload.
             </p>
           </div>
@@ -167,7 +182,8 @@ export default function MetaSettings() {
         <div className="flex gap-2">
           <button
             type="submit"
-            className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-brand-light"
+            className="px-4 py-2 text-white rounded-lg text-sm font-semibold transition-all"
+            style={{ background: "linear-gradient(135deg, #0099C6, #255C9E)", boxShadow: "0 1px 3px rgba(0,153,198,0.25)" }}
           >
             {updateMut.isPending ? "Saving..." : "Save Settings"}
           </button>
@@ -178,14 +194,15 @@ export default function MetaSettings() {
       </form>
 
       {/* Token Validation */}
-      <div className="mt-8 border border-zinc-800 rounded-lg p-5">
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">Token Validation</h3>
-        <p className="text-sm text-zinc-500">
+      <div className="mt-8 rounded-lg p-5" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-2)", boxShadow: "var(--shadow-sm)" }}>
+        <h3 className="text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Token Validation</h3>
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
           Token validation and account info will be available once Meta API integration is connected.
         </p>
         <button
           disabled
-          className="mt-3 px-4 py-2 bg-zinc-800 text-zinc-500 rounded-lg text-sm cursor-not-allowed"
+          className="mt-3 px-4 py-2 rounded-lg text-sm cursor-not-allowed"
+          style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}
         >
           Validate Token (Coming Soon)
         </button>

@@ -196,9 +196,9 @@ function GuideTab() {
 type CopyEntry = { id: number; copySlug: string; headline: string; bodyCopy: string; product: string; status: string };
 const emptyCopyForm = { copySlug: "", headline: "", bodyCopy: "", product: "OIO", status: "active" as const };
 const copyStatusColors: Record<string, string> = {
-  active: "bg-green-50 text-green-700 border-green-200",
-  draft: "bg-zinc-100 text-zinc-500 border-zinc-300",
-  retired: "bg-red-50 text-red-700 border-red-200",
+  active: "bg-green-500/10 text-green-400 border-green-500/20",
+  draft: "bg-zinc-800/50 text-zinc-400 border-zinc-700",
+  retired: "bg-red-500/10 text-red-400 border-red-500/20",
 };
 
 function CopyTab() {
@@ -319,13 +319,13 @@ const emptyAngleForm = { angleSlug: "", description: "", example: "", product: "
 const funnelColors: Record<string, string> = {
   TOF: "bg-blue-500/10 text-blue-400 border-blue-500/15",
   MOF: "bg-amber-500/10 text-amber-400 border-amber-500/15",
-  BOF: "bg-green-50 text-green-700 border-green-200",
+  BOF: "bg-green-500/10 text-green-400 border-green-500/15",
   ALL: "bg-purple-500/10 text-purple-400 border-purple-500/15",
 };
 const angleStatusColors: Record<string, string> = {
-  active: "bg-green-50 text-green-700 border-green-200",
+  active: "bg-green-500/10 text-green-400 border-green-500/20",
   testing: "bg-amber-500/10 text-amber-400 border-amber-500/15",
-  retired: "bg-red-50 text-red-700 border-red-200",
+  retired: "bg-red-500/10 text-red-400 border-red-500/20",
 };
 
 function LabelsTab() {

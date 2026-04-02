@@ -29,11 +29,11 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: "var(--surface-0)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+      style={{ background: "linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%)", fontFamily: "'IBM Plex Sans', sans-serif" }}
     >
       <div
         className="w-full max-w-sm rounded-xl p-8 space-y-6"
-        style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)" }}
+        style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)", boxShadow: "0 8px 32px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.2)" }}
       >
         {/* Logo */}
         <div className="flex items-center gap-3">

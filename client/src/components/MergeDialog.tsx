@@ -55,7 +55,7 @@ function DimBadge({ dim }: { dim: string }) {
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 text-[9px] font-mono font-bold rounded-sm border ${
-        DIM_COLORS[dim] ?? "bg-zinc-500/10 text-zinc-300 border-zinc-500/20"
+        DIM_COLORS[dim] ?? "bg-zinc-800/50 text-zinc-400 border-zinc-700"
       }`}
     >
       {dim}

@@ -118,12 +118,12 @@ function getCurrentYearMonth(): string {
 function dimBadgeClass(dim: string, _status?: string): string {
   const base = "rounded-sm px-1.5 py-0.5 text-[9px] font-mono font-bold border inline-flex items-center gap-1";
   const dimStyles: Record<string, string> = {
-    "9:16": "bg-violet-500/10 text-violet-700 border-violet-500/20",
-    "4:5": "bg-sky-500/10 text-sky-700 border-sky-500/20",
-    "1:1": "bg-teal-500/10 text-teal-700 border-teal-500/20",
-    "16:9": "bg-amber-500/10 text-amber-700 border-amber-500/20",
+    "9:16": "bg-violet-500/10 text-violet-400 border-violet-500/20",
+    "4:5": "bg-sky-500/10 text-sky-400 border-sky-500/20",
+    "1:1": "bg-teal-500/10 text-teal-400 border-teal-500/20",
+    "16:9": "bg-amber-500/10 text-amber-400 border-amber-500/20",
   };
-  return `${base} ${dimStyles[dim] || "bg-zinc-500/10 text-zinc-600 border-zinc-500/20"}`;
+  return `${base} ${dimStyles[dim] || "bg-zinc-800/50 text-zinc-400 border-zinc-700"}`;
 }
 
 // Compute "worst" status for a group
@@ -354,10 +354,11 @@ function ConceptCard({
 
   return (
     <div
-      className="rounded-lg flex flex-col overflow-hidden transition-all"
+      className="rounded-lg flex flex-col overflow-hidden transition-all card-hover"
       style={{
-        border: isSelected ? "1px solid rgba(0,153,198,0.5)" : "1px solid var(--surface-3)",
+        border: isSelected ? "1px solid rgba(0,153,198,0.5)" : "1px solid var(--surface-2)",
         background: isSelected ? "rgba(0,153,198,0.04)" : "var(--surface-1)",
+        boxShadow: isSelected ? "0 0 0 2px rgba(0,153,198,0.2)" : "var(--shadow-sm)",
       }}
     >
       {/* Thumbnail — click to open detail drawer */}
@@ -492,7 +493,7 @@ function ConceptCard({
         {!isGroupLocked && (
           <button
             onClick={onDelete}
-            className="ml-auto p-1 text-zinc-600 hover:text-red-600 transition-colors"
+            className="ml-auto p-1 text-zinc-500 hover:text-red-400 transition-colors"
             title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -895,11 +896,11 @@ export default function Home() {
   }, []);
 
   const statusColors: Record<string, string> = {
-    draft: "bg-slate-100 text-slate-500 border border-slate-300",
-    ready: "bg-green-50 text-green-700 border border-green-200",
-    uploading: "bg-blue-50 text-blue-700 border border-blue-200",
-    uploaded: "bg-emerald-50 text-emerald-700 border border-emerald-200",
-    error: "bg-red-50 text-red-700 border border-red-200",
+    draft: "bg-zinc-800/50 text-zinc-400 border border-zinc-700",
+    ready: "bg-green-500/10 text-green-400 border border-green-500/20",
+    uploading: "bg-blue-500/10 text-blue-400 border border-blue-500/20",
+    uploaded: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+    error: "bg-red-500/10 text-red-400 border border-red-500/20",
   };
 
   const updateConceptField = async (conceptKey: string, field: string, value: string) => {
@@ -1015,7 +1016,7 @@ export default function Home() {
       {/* Header */}
       <div
         className="flex-shrink-0 px-5 py-3 flex items-center justify-between gap-3"
-        style={{ borderBottom: "1px solid var(--surface-3)", background: "var(--surface-0)" }}
+        style={{ borderBottom: "1px solid var(--surface-2)", background: "var(--surface-1)", boxShadow: "var(--shadow-sm)" }}
       >
         <div>
           <h2
@@ -1145,15 +1146,15 @@ export default function Home() {
 
           <button
             onClick={() => setShowAddDialog(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 transition-colors text-[11px] font-medium rounded-md"
-            style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 transition-all text-[11px] font-semibold rounded-md"
+            style={{ background: "linear-gradient(135deg, #0099C6, #255C9E)", color: "white", border: "none", boxShadow: "0 1px 3px rgba(0,153,198,0.25)" }}
             onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,153,198,0.5)";
-              (e.currentTarget as HTMLButtonElement).style.color = "#60A7C8";
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 2px 8px rgba(0,153,198,0.35)";
+              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-0.5px)";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--surface-3)";
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,153,198,0.25)";
+              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
             }}
           >
             <Plus className="w-3.5 h-3.5" /> Add Ad
@@ -1236,16 +1237,16 @@ export default function Home() {
 
       {/* Focus view tabs */}
       <div
-        className="flex-shrink-0 flex items-center gap-1 px-5 py-2.5 overflow-x-auto"
-        style={{ borderBottom: "1px solid var(--surface-3)", background: "var(--surface-0)" }}
+        className="flex-shrink-0 flex items-center gap-1.5 px-5 py-2.5 overflow-x-auto"
+        style={{ borderBottom: "1px solid var(--surface-2)", background: "var(--surface-1)" }}
       >
         {FOCUS_VIEWS.map((view) => {
           const isActive = focusView === view.key;
           const count = viewCounts[view.key] || 0;
           const accentMap: Record<string, { bg: string; border: string; text: string; countBg: string; countText: string }> = {
-            inbox: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.35)", text: "#f59e0b", countBg: "rgba(245,158,11,0.15)", countText: "#fbbf24" },
-            queue: { bg: "rgba(59,130,246,0.08)", border: "rgba(59,130,246,0.35)", text: "#3b82f6", countBg: "rgba(59,130,246,0.15)", countText: "#60a5fa" },
-            live: { bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.35)", text: "#10b981", countBg: "rgba(16,185,129,0.15)", countText: "#34d399" },
+            inbox: { bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.3)", text: "#f59e0b", countBg: "rgba(245,158,11,0.15)", countText: "#fbbf24" },
+            queue: { bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.3)", text: "#3b82f6", countBg: "rgba(59,130,246,0.15)", countText: "#60a5fa" },
+            live: { bg: "rgba(16,185,129,0.1)", border: "rgba(16,185,129,0.3)", text: "#10b981", countBg: "rgba(16,185,129,0.15)", countText: "#34d399" },
           };
           const accent = accentMap[view.key] || accentMap.inbox;
           return (
@@ -1283,7 +1284,7 @@ export default function Home() {
       {/* Feature 4: Search bar */}
       <div
         className="flex-shrink-0 px-5 py-2 flex items-center gap-2"
-        style={{ borderBottom: "1px solid var(--surface-3)", background: "var(--surface-0)" }}
+        style={{ borderBottom: "1px solid var(--surface-2)", background: "var(--surface-0)" }}
       >
         <div className="relative flex items-center flex-1 max-w-xs">
           <Search className="absolute left-2.5 w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
@@ -1343,13 +1344,13 @@ export default function Home() {
           <div className="w-px h-4" style={{ background: "var(--surface-3)" }} />
           <button
             onClick={() => bulkStatusMut.mutate({ ids: selectedIds, status: "ready" })}
-            className="px-2.5 py-1 text-xs bg-green-50 text-green-700 border border-green-200 rounded-md hover:bg-green-100"
+            className="px-2.5 py-1 text-xs bg-green-500/10 text-green-400 border border-green-500/20 rounded-md hover:bg-green-500/20"
           >
             ✓ Mark Ready
           </button>
           <button
             onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}
-            className="px-2.5 py-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded-md hover:bg-red-100"
+            className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20"
           >
             Delete All
           </button>
@@ -1437,45 +1438,46 @@ export default function Home() {
         {filteredGrouped.length === 0 && (() => {
           const emptyInfo = FOCUS_VIEW_EMPTY[focusView] || FOCUS_VIEW_EMPTY.inbox;
           return (
-            <div
-              className="flex flex-col items-center justify-center py-24 px-8 text-center"
-              style={{ minHeight: "320px" }}
-            >
-              <CloudUpload
-                className="mb-5"
-                style={{ width: "48px", height: "48px", color: "var(--text-muted)", strokeWidth: 1.5 }}
-              />
-              <h3
-                className="font-semibold mb-2"
-                style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "16px", color: "var(--text-secondary)", letterSpacing: "-0.01em" }}
+            <div className="flex items-center justify-center px-8" style={{ minHeight: "380px" }}>
+              <div
+                className="flex flex-col items-center justify-center py-16 px-12 text-center rounded-xl w-full max-w-lg"
+                style={{
+                  border: "2px dashed var(--surface-3)",
+                  background: "rgba(22,27,34,0.5)",
+                }}
               >
-                {searchText ? "No results found" : emptyInfo.title}
-              </h3>
-              <p
-                className="mb-6 max-w-md"
-                style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: "1.6" }}
-              >
-                {searchText
-                  ? `No concepts match "${searchText}". Try a different search term.`
-                  : emptyInfo.message}
-              </p>
-              {!searchText && focusView === "inbox" && (
-                <button
-                  onClick={() => setShowAddDialog(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors"
-                  style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(0,153,198,0.5)";
-                    (e.currentTarget as HTMLButtonElement).style.color = "#60A7C8";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--surface-3)";
-                    (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
-                  }}
+                <div
+                  className="mb-5 rounded-xl flex items-center justify-center animate-float"
+                  style={{ width: "56px", height: "56px", background: "linear-gradient(135deg, rgba(0,153,198,0.1), rgba(37,92,158,0.08))" }}
                 >
-                  <Plus className="w-4 h-4" /> Add Ad manually
-                </button>
-              )}
+                  <CloudUpload style={{ width: "28px", height: "28px", color: "#0099C6", strokeWidth: 1.5 }} />
+                </div>
+                <h3
+                  className="font-semibold mb-1.5"
+                  style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: "17px", color: "var(--text-primary)", letterSpacing: "-0.02em" }}
+                >
+                  {searchText ? "No results found" : emptyInfo.title}
+                </h3>
+                <p
+                  className="mb-6 max-w-sm"
+                  style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: "1.6" }}
+                >
+                  {searchText
+                    ? `No concepts match "${searchText}". Try a different search term.`
+                    : emptyInfo.message}
+                </p>
+                {!searchText && focusView === "inbox" && (
+                  <button
+                    onClick={() => setShowAddDialog(true)}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold"
+                    style={{ background: "#0099C6", color: "white", boxShadow: "0 1px 3px rgba(0,153,198,0.3)" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
+                  >
+                    <Plus className="w-4 h-4" /> Add Ad manually
+                  </button>
+                )}
+              </div>
             </div>
           );
         })()}
@@ -1542,7 +1544,7 @@ export default function Home() {
             <table className="w-full text-xs border-collapse">
               <thead
                 className="sticky top-0 z-10"
-                style={{ background: "var(--surface-1)", borderBottom: "1px solid var(--surface-3)" }}
+                style={{ background: "var(--surface-1)", borderBottom: "2px solid var(--surface-2)", boxShadow: "var(--shadow-sm)" }}
               >
                 <tr>
                   <th className="px-3 py-2 w-8 text-left">
@@ -1806,7 +1808,7 @@ export default function Home() {
                               <div className="relative">
                                 <button
                                   onClick={() => setAddSizeOpen(addSizeOpen === key ? null : key)}
-                                  className="p-1 text-zinc-500 hover:text-zinc-200 transition-colors"
+                                  className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
                                   title="Add Size"
                                 >
                                   <Plus className="w-3.5 h-3.5" />
@@ -1846,7 +1848,7 @@ export default function Home() {
                             {!isGroupLocked && (
                               <button
                                 onClick={() => confirmDelete(rows.map((r) => r.id), shared.generatedAdName || "this concept")}
-                                className="p-1 text-zinc-600 hover:text-red-600 transition-colors"
+                                className="p-1 text-zinc-500 hover:text-red-400 transition-colors"
                                 title="Delete all sizes"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1899,7 +1901,7 @@ export default function Home() {
                                 </code>
                                 <button
                                   onClick={() => navigator.clipboard.writeText(shared.generatedAdName)}
-                                  className="p-1 text-zinc-500 hover:text-zinc-200 transition-colors"
+                                  className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
                                   title="Copy to clipboard"
                                 >
                                   <Copy className="w-3 h-3" />
@@ -1999,7 +2001,7 @@ export default function Home() {
                                               {!sizeLocked && (
                                                 <button
                                                   onClick={() => confirmDelete([sizeRow.id], `${sizeRow.dimensions} size`)}
-                                                  className="p-1 text-zinc-600 hover:text-red-600 transition-colors"
+                                                  className="p-1 text-zinc-500 hover:text-red-400 transition-colors"
                                                   title="Delete this size"
                                                 >
                                                   <Trash2 className="w-3 h-3" />
@@ -2064,7 +2066,7 @@ export default function Home() {
                                       <Copy className="w-3 h-3" /> Copy
                                     </button>
                                   </div>
-                                  <pre className="text-[10px] font-mono text-blue-200 bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
+                                  <pre className="text-[10px] font-mono text-blue-300 bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
                                     {JSON.stringify(stubPayloads[sizeRow.id], null, 2)}
                                   </pre>
                                 </div>

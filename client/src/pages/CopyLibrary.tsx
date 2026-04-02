@@ -300,9 +300,9 @@ export default function CopyLibrary() {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    active: "bg-green-50 text-green-700 border-green-200",
-    draft: "bg-slate-100 text-slate-500 border-slate-300",
-    retired: "bg-red-50 text-red-700 border-red-200",
+    active: "bg-green-500/10 text-green-400 border-green-500/20",
+    draft: "bg-zinc-800/50 text-zinc-400 border-zinc-700",
+    retired: "bg-red-500/10 text-red-400 border-red-500/20",
   };
   return (
     <span

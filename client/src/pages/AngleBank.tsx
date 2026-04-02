@@ -70,10 +70,10 @@ export default function AngleBank() {
   }
 
   const funnelColors: Record<string, string> = {
-    TOF: "bg-blue-50 text-blue-700 border-blue-200",
-    MOF: "bg-amber-50 text-amber-700 border-amber-200",
-    BOF: "bg-green-50 text-green-700 border-green-200",
-    ALL: "bg-purple-50 text-purple-700 border-purple-200",
+    TOF: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    MOF: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    BOF: "bg-green-500/10 text-green-400 border-green-500/20",
+    ALL: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   };
 
   const inputStyle: React.CSSProperties = {
@@ -302,9 +302,9 @@ export default function AngleBank() {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    active: "bg-green-50 text-green-700 border-green-200",
-    testing: "bg-amber-50 text-amber-700 border-amber-200",
-    retired: "bg-red-50 text-red-700 border-red-200",
+    active: "bg-green-500/10 text-green-400 border-green-500/20",
+    testing: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    retired: "bg-red-500/10 text-red-400 border-red-500/20",
   };
   return (
     <span className={`inline-block px-1.5 py-0.5 text-[10px] font-medium rounded-sm border ${colors[status] || colors.active}`}>

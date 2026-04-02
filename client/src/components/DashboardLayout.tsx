@@ -27,13 +27,13 @@ function NavItem({ icon: Icon, label, path }: { icon: any; label: string; path: 
     <NavLink
       to={path}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
-          isActive ? "border-l-2 border-[#0099C6] pl-[9px]" : "border-l-2 border-transparent"
+        `flex items-center gap-2.5 px-2.5 py-[8px] font-medium transition-all duration-100 rounded-sm ${
+          isActive ? "text-[12px] border-l-2 border-[#0099C6] pl-[9px]" : "text-[11px] border-l-2 border-transparent"
         }`
       }
       style={({ isActive }) =>
         isActive
-          ? { background: "rgba(0,153,198,0.08)", color: "var(--text-primary)" }
+          ? { background: "rgba(0,153,198,0.08)", color: "var(--text-primary)", boxShadow: "0 0 8px rgba(0,153,198,0.12)" }
           : { color: "var(--text-secondary)" }
       }
     >
@@ -56,16 +56,16 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: "var(--surface-0)", color: "var(--text-primary)" }}>
       {/* Sidebar */}
-      <aside className="w-48 flex-shrink-0 flex flex-col" style={{ background: "var(--surface-1)", borderRight: "1px solid var(--surface-3)" }}>
+      <aside className="w-48 flex-shrink-0 flex flex-col" style={{ background: "var(--surface-1)", boxShadow: "inset -1px 0 0 var(--surface-3), 2px 0 8px rgba(0,0,0,0.03)" }}>
 
         {/* Logo */}
-        <div className="px-4 py-4" style={{ borderBottom: "1px solid var(--surface-3)" }}>
+        <div className="px-4 py-4" style={{ borderBottom: "1px solid var(--surface-3)", background: "linear-gradient(180deg, rgba(0,153,198,0.04) 0%, transparent 100%)" }}>
           <div className="flex items-center gap-2.5">
             <div
-              className="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-sm"
-              style={{ background: "linear-gradient(135deg, #0099C6 0%, #255C9E 100%)" }}
+              className="w-7 h-7 flex items-center justify-center flex-shrink-0 rounded-sm"
+              style={{ background: "linear-gradient(135deg, #0099C6 0%, #255C9E 100%)", boxShadow: "0 1px 3px rgba(0,153,198,0.3)" }}
             >
-              <span className="text-[10px] font-bold text-white" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>K</span>
+              <span className="text-[11px] font-bold text-white" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>K</span>
             </div>
             <div className="leading-none">
               <h1 className="text-[13px] font-semibold leading-none" style={{ fontFamily: "'IBM Plex Sans', sans-serif", letterSpacing: "-0.01em" }}>
@@ -79,12 +79,15 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
         {/* Nav */}
         <nav className="flex-1 py-3 px-2 overflow-y-auto">
           {/* Focus view section */}
-          <p
-            className="px-2.5 pt-1 pb-2 text-[9px] font-semibold uppercase"
-            style={{ letterSpacing: "0.1em", color: "var(--text-muted)" }}
-          >
-            Upload Queue
-          </p>
+          <div className="px-2.5 pt-1 pb-2 flex items-center gap-2">
+            <p
+              className="text-[9px] font-semibold uppercase whitespace-nowrap"
+              style={{ letterSpacing: "0.1em", color: "var(--text-muted)" }}
+            >
+              Upload Queue
+            </p>
+            <div className="flex-1 h-px" style={{ background: "linear-gradient(90deg, var(--surface-3), transparent)" }} />
+          </div>
           <div className="space-y-px mb-3">
             {FOCUS_VIEWS.map((view) => {
               const isActive = isHome && currentView === view.key;
@@ -92,12 +95,12 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
                 <Link
                   key={view.key}
                   to={`/?view=${view.key}`}
-                  className={`flex items-center gap-2.5 px-2.5 py-[7px] text-[11px] font-medium transition-all duration-100 rounded-sm ${
-                    isActive ? "border-l-2 pl-[9px]" : "border-l-2 border-transparent"
+                  className={`flex items-center gap-2.5 px-2.5 py-[8px] font-medium transition-all duration-100 rounded-sm ${
+                    isActive ? "text-[12px] border-l-2 pl-[9px]" : "text-[11px] border-l-2 border-transparent"
                   }`}
                   style={
                     isActive
-                      ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)" }
+                      ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)", boxShadow: `0 0 8px ${view.accent}1a` }
                       : { color: "var(--text-secondary)" }
                   }
                 >
@@ -122,25 +125,25 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
         {/* Footer */}
         <div className="px-3 py-3 space-y-2" style={{ borderTop: "1px solid var(--surface-3)" }}>
           <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#3fb950", boxShadow: "0 0 4px #3fb950aa" }} />
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#3fb950", boxShadow: "0 0 6px #3fb950cc, 0 0 12px #3fb95044" }} />
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Live · v1.0</span>
           </div>
           {onSignOut && (
             <button
               onClick={onSignOut}
-              className="flex items-center gap-2 w-full px-2 py-1.5 rounded-sm text-[11px] transition-colors"
-              style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.06)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+              className="flex items-center gap-2 w-full px-2 py-1 rounded-sm text-[10px] transition-colors"
+              style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer", opacity: 0.7 }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.04)"; (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.opacity = "0.7"; }}
             >
-              <LogOut className="w-3 h-3" /> Sign out
+              <LogOut className="w-2.5 h-2.5" /> Sign out
             </button>
           )}
         </div>
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0 overflow-auto">{children}</main>
+      <main className="flex-1 min-w-0 overflow-auto" style={{ background: "var(--surface-0)" }}>{children}</main>
     </div>
   );
 }

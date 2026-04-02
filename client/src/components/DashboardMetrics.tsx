@@ -54,27 +54,30 @@ const labelStyle: React.CSSProperties = {
   letterSpacing: "0.08em",
   color: "var(--text-muted)",
   lineHeight: 1,
-  marginBottom: 4,
+  marginBottom: 8,
   fontFamily: "'IBM Plex Sans', sans-serif",
 };
 
 const valueStyle: React.CSSProperties = {
-  fontSize: 20,
-  fontWeight: 600,
+  fontSize: 28,
+  fontWeight: 700,
   color: "var(--text-primary)",
   lineHeight: 1,
   fontFamily: "'IBM Plex Sans', sans-serif",
 };
 
 const cardStyle: React.CSSProperties = {
-  background: "var(--surface-2)",
-  borderRadius: 8,
-  padding: "12px 16px",
+  background: "var(--surface-1)",
+  borderRadius: 10,
+  padding: 16,
   minWidth: 120,
   display: "flex",
   flexDirection: "column",
   justifyContent: "center",
   gap: 6,
+  boxShadow: "var(--shadow-sm)",
+  border: "1px solid var(--surface-2)",
+  transition: "box-shadow 0.15s ease, border-color 0.15s ease",
 };
 
 export default function DashboardMetrics({ items }: DashboardMetricsProps) {
@@ -162,9 +165,9 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
   return (
     <div
       style={{
-        background: "var(--surface-1)",
-        borderBottom: "1px solid var(--surface-3)",
-        padding: "12px 20px",
+        background: "linear-gradient(180deg, var(--surface-0) 0%, var(--surface-1) 100%)",
+        borderBottom: "1px solid var(--surface-2)",
+        padding: "14px 20px",
         overflowX: "auto",
         fontFamily: "'IBM Plex Sans', sans-serif",
       }}
@@ -172,7 +175,7 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
       <div
         style={{
           display: "flex",
-          gap: 12,
+          gap: 16,
           minWidth: "max-content",
           alignItems: "stretch",
         }}
@@ -213,7 +216,7 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
         {/* Ready to Upload */}
         <div style={cardStyle}>
           <div style={labelStyle}>Ready to Upload</div>
-          <span style={{ ...valueStyle, color: "#4ade80" }}>{metrics.readyCount}</span>
+          <span style={{ ...valueStyle, color: "#0099C6" }}>{metrics.readyCount}</span>
         </div>
 
         {/* Uploaded */}
@@ -240,7 +243,7 @@ export default function DashboardMetrics({ items }: DashboardMetricsProps) {
             <span
               style={{
                 ...valueStyle,
-                color: metrics.needsAttention > 0 ? "#f59e0b" : "var(--text-muted)",
+                color: metrics.needsAttention > 0 ? "#d97706" : "var(--text-muted)",
               }}
             >
               {metrics.needsAttention}
