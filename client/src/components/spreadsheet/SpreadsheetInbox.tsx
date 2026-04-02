@@ -650,10 +650,22 @@ export default function SpreadsheetInbox({
                         {row.dimensions}
                       </span>
                     </td>
-                    <td colSpan={COLUMNS.length + 2} className="px-2 py-1">
+                    <td colSpan={COLUMNS.length + 1} className="px-2 py-1">
                       <span style={{ fontSize: "10px", color: "var(--text-muted)", fontFamily: "'IBM Plex Mono', monospace" }}>
                         {row.generatedAdName}
                       </span>
+                    </td>
+                    <td className="px-2 py-1">
+                      <button
+                        onClick={() => onDelete([row.id], `${row.dimensions} asset`)}
+                        className="p-0.5 rounded-sm transition-colors"
+                        title={`Remove ${row.dimensions} asset`}
+                        style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer" }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f87171"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </td>
                   </tr>
                 ))}
