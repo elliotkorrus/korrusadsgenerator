@@ -6,10 +6,9 @@ import * as trpcExpress from "@trpc/server/adapters/express";
 import multer from "multer";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// In production on Railway, set UPLOADS_PATH to the mounted volume path (e.g. /app/uploads)
 const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploads");
 
 const app = express();
@@ -18,10 +17,9 @@ app.use(cors());
 app.use(express.json());
 
 // ── Simple password auth ─────────────────────────────────────────────────────
-// Set APP_PASSWORD env var to enable. Skipped in development if unset.
 const APP_PASSWORD = process.env.APP_PASSWORD;
 function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!APP_PASSWORD) return next(); // no password set → open (dev mode)
+  if (!APP_PASSWORD) return next();
   const auth = req.headers["x-app-token"];
   if (auth === APP_PASSWORD) return next();
   res.status(401).json({ error: "Unauthorized" });
@@ -40,7 +38,7 @@ const storage = multer.diskStorage({
     cb(null, `${unique}${ext}`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
+const upload = multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } });
 
 app.post("/api/upload", upload.single("file"), (req, res) => {
   if (!req.file) {
@@ -94,44 +92,31 @@ app.use(
   trpcExpress.createExpressMiddleware({ router: appRouter })
 );
 
-// ─── MANUS "Send to Meta" stub ─────────────────────────────────
-// When you have MANUS credits, replace the body of this route with
-// a real call to your MANUS webhook URL. MANUS will receive the ad
-// data and use browser automation to upload it to Meta Ads Manager.
-//
-// Example MANUS call (future):
-//   const res = await fetch(process.env.MANUS_WEBHOOK_URL, {
-//     method: "POST",
-//     headers: { "Content-Type": "application/json" },
-//     body: JSON.stringify(adPayload),
-//   });
-//
+// ─── MANUS "Send to Meta" ─────────────────────────────────────
 app.post("/api/send-to-meta", express.json(), async (req, res) => {
   const { adId } = req.body as { adId: number };
   if (!adId) { res.status(400).json({ error: "adId required" }); return; }
 
-  // Fetch the ad from DB
-  const { eq } = await import("drizzle-orm");
-  const ad = db.select().from(schema.uploadQueue).where(eq(schema.uploadQueue.id, adId)).get();
+  const adRows = await db.select().from(schema.uploadQueue).where(eq(schema.uploadQueue.id, adId));
+  const ad = adRows[0];
   if (!ad) { res.status(404).json({ error: "Ad not found" }); return; }
   if (ad.status !== "ready") { res.status(400).json({ error: "Ad must be in 'ready' status" }); return; }
 
-  // Fetch meta settings for defaults
-  const metaSettings = db.select().from(schema.metaSettings).get();
+  const metaRows = await db.select().from(schema.metaSettings);
+  const metaSettings = metaRows[0];
 
-  // Resolve headline/bodyCopy from copy library if empty on the ad
   let headline = ad.headline || "";
   let bodyCopy = ad.bodyCopy || "";
   if ((!headline || !bodyCopy) && ad.copySlug) {
-    const copyRow = db.select().from(schema.copyLibrary)
-      .where(eq(schema.copyLibrary.copySlug, ad.copySlug)).get();
+    const copyRows = await db.select().from(schema.copyLibrary)
+      .where(eq(schema.copyLibrary.copySlug, ad.copySlug));
+    const copyRow = copyRows[0];
     if (copyRow) {
       if (!headline) headline = copyRow.headline;
       if (!bodyCopy) bodyCopy = copyRow.bodyCopy;
     }
   }
 
-  // Resolve fields with fallback to meta_settings defaults
   const destinationUrl = ad.destinationUrl || metaSettings?.defaultDestinationUrl || "";
   const displayUrl = ad.displayUrl || metaSettings?.defaultDisplayUrl || "";
   const cta = ad.cta || metaSettings?.defaultCta || "SHOP_NOW";
@@ -139,7 +124,6 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
   const pageId = metaSettings?.pageId || "";
   const utmTemplate = metaSettings?.utmTemplate || "";
 
-  // Validate required fields
   const missing: string[] = [];
   if (!ad.fileUrl) missing.push("fileUrl");
   if (!ad.adSetId) missing.push("adSetId");
@@ -158,7 +142,6 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
     return;
   }
 
-  // Build the payload MANUS will receive
   const adPayload = {
     adId: ad.id,
     adName: ad.generatedAdName,
@@ -181,12 +164,9 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
 
   const manusWebhookUrl = process.env.MANUS_WEBHOOK_URL;
 
-  // Always mark as uploading immediately
-  const { sql: sqlExpr } = await import("drizzle-orm");
-  db.update(schema.uploadQueue)
-    .set({ status: "uploading", updatedAt: sqlExpr`datetime('now')` })
-    .where(eq(schema.uploadQueue.id, adId))
-    .run();
+  await db.update(schema.uploadQueue)
+    .set({ status: "uploading", updatedAt: sql`now()` })
+    .where(eq(schema.uploadQueue.id, adId));
 
   if (manusWebhookUrl) {
     try {
@@ -196,61 +176,52 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
         body: JSON.stringify(adPayload),
       });
       if (!manusRes.ok) throw new Error(`MANUS returned ${manusRes.status}`);
-      // On success, MANUS will call back /api/meta-callback to update status
       res.json({ success: true, message: "Sent to MANUS", adPayload });
     } catch (err: any) {
-      db.update(schema.uploadQueue)
-        .set({ status: "error", errorMessage: err.message, updatedAt: sqlExpr`datetime('now')` })
-        .where(eq(schema.uploadQueue.id, adId))
-        .run();
+      await db.update(schema.uploadQueue)
+        .set({ status: "error", errorMessage: err.message, updatedAt: sql`now()` })
+        .where(eq(schema.uploadQueue.id, adId));
       res.status(500).json({ error: err.message });
     }
   } else {
-    // STUB: no webhook configured yet — return the payload and reset status to ready
-    // so the item doesn't get stuck on "uploading" during development
     res.json({
       success: true,
       stub: true,
       message: "MANUS_WEBHOOK_URL not set. Ad payload ready to send:",
       adPayload,
     });
-    // Reset back to ready after returning (non-blocking)
-    setImmediate(() => {
-      db.update(schema.uploadQueue)
-        .set({ status: "ready", updatedAt: sqlExpr`datetime('now')` })
-        .where(eq(schema.uploadQueue.id, adId))
-        .run();
-    });
+    // Reset back to ready after returning
+    db.update(schema.uploadQueue)
+      .set({ status: "ready", updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.id, adId))
+      .then(() => {});
   }
 });
 
-// MANUS calls this endpoint when it finishes uploading to Meta Ads Manager
+// MANUS callback
 app.post("/api/meta-callback", express.json(), async (req, res) => {
   const { adId, metaAdId, metaCreativeId, error } = req.body;
-  const { eq, sql } = await import("drizzle-orm");
 
   if (error) {
-    db.update(schema.uploadQueue)
-      .set({ status: "error", errorMessage: error, updatedAt: sql`datetime('now')` })
-      .where(eq(schema.uploadQueue.id, adId))
-      .run();
+    await db.update(schema.uploadQueue)
+      .set({ status: "error", errorMessage: error, updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.id, adId));
     res.json({ success: true, status: "error" });
   } else {
-    db.update(schema.uploadQueue)
+    await db.update(schema.uploadQueue)
       .set({
         status: "uploaded",
         metaAdId: metaAdId || null,
         metaCreativeId: metaCreativeId || null,
-        uploadedAt: sql`datetime('now')`,
-        updatedAt: sql`datetime('now')`,
+        uploadedAt: new Date().toISOString(),
+        updatedAt: sql`now()`,
       })
-      .where(eq(schema.uploadQueue.id, adId))
-      .run();
+      .where(eq(schema.uploadQueue.id, adId));
     res.json({ success: true, status: "uploaded" });
   }
 });
 
-// Ensure uploads directory exists (important on first boot with Railway volume)
+// Ensure uploads directory exists
 import { mkdirSync } from "fs";
 mkdirSync(uploadsDir, { recursive: true });
 
@@ -258,13 +229,11 @@ mkdirSync(uploadsDir, { recursive: true });
 if (process.env.NODE_ENV === "production") {
   const staticDir = path.join(__dirname, "..", "dist", "public");
   app.use(express.static(staticDir));
-  // Fallback: send index.html for all non-API routes (client-side routing)
   app.get(/^(?!\/api|\/uploads).*/, (_req, res) => {
     res.sendFile(path.join(staticDir, "index.html"));
   });
 }
 
-// In dev mode (NODE_ENV !== production), always use 3002 to avoid colliding with Vite on 5173
 const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3002) : 3002;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

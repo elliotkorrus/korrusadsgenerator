@@ -1,8 +1,5 @@
 FROM node:20-slim
 
-# better-sqlite3 needs build tools
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Install dependencies
@@ -15,8 +12,8 @@ COPY . .
 # Build the Vite frontend
 RUN npm run build
 
-# Create data & uploads dirs (Railway volumes mount over these)
-RUN mkdir -p /app/data /app/uploads
+# Create uploads dir (Railway volumes mount over this)
+RUN mkdir -p /app/uploads
 
 EXPOSE 3002
 

@@ -1,6 +1,6 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db, schema } from "./db.js";
 import { generateAdName } from "../shared/naming.js";
 
@@ -11,36 +11,32 @@ const publicProcedure = t.procedure;
 const uploadQueueRouter = t.router({
   list: publicProcedure
     .input(z.object({ status: z.string().optional() }).optional())
-    .query(({ input }) => {
+    .query(async ({ input }) => {
       if (input?.status && input.status !== "all") {
         return db
           .select()
           .from(schema.uploadQueue)
-          .where(eq(schema.uploadQueue.status, input.status as any))
-          .orderBy(desc(schema.uploadQueue.createdAt))
-          .all();
+          .where(eq(schema.uploadQueue.status, input.status))
+          .orderBy(desc(schema.uploadQueue.createdAt));
       }
       return db
         .select()
         .from(schema.uploadQueue)
-        .orderBy(desc(schema.uploadQueue.createdAt))
-        .all();
+        .orderBy(desc(schema.uploadQueue.createdAt));
     }),
 
-  counts: publicProcedure.query(() => {
-    const all = db
+  counts: publicProcedure.query(async () => {
+    const allRows = await db
       .select({ count: sql<number>`count(*)` })
-      .from(schema.uploadQueue)
-      .get();
+      .from(schema.uploadQueue);
     const statuses = ["draft", "ready", "uploading", "uploaded", "error"] as const;
-    const counts: Record<string, number> = { all: all?.count ?? 0 };
+    const counts: Record<string, number> = { all: Number(allRows[0]?.count ?? 0) };
     for (const s of statuses) {
-      const r = db
+      const r = await db
         .select({ count: sql<number>`count(*)` })
         .from(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.status, s))
-        .get();
-      counts[s] = r?.count ?? 0;
+        .where(eq(schema.uploadQueue.status, s));
+      counts[s] = Number(r[0]?.count ?? 0);
     }
     return counts;
   }),
@@ -73,7 +69,7 @@ const uploadQueueRouter = t.router({
         agency: z.string().optional().nullable(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const generatedAdName = generateAdName({
         brand: input.brand,
         initiative: input.initiative,
@@ -93,11 +89,11 @@ const uploadQueueRouter = t.router({
         input.source, input.product, input.contentType, input.creativeType,
         input.copySlug, input.date
       ].join('__');
-      return db
+      const rows = await db
         .insert(schema.uploadQueue)
         .values({ ...input, generatedAdName, conceptKey })
-        .returning()
-        .get();
+        .returning();
+      return rows[0];
     }),
 
   update: publicProcedure
@@ -135,14 +131,13 @@ const uploadQueueRouter = t.router({
         conceptKey: z.string().optional().nullable(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updates } = input;
-      // Fetch current row to merge for name regeneration
-      const current = db
+      const currentRows = await db
         .select()
         .from(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.id, id))
-        .get();
+        .where(eq(schema.uploadQueue.id, id));
+      const current = currentRows[0];
       if (!current) throw new Error("Row not found");
 
       const merged = { ...current, ...updates };
@@ -161,24 +156,23 @@ const uploadQueueRouter = t.router({
         date: merged.date,
       });
 
-      // Recompute conceptKey (all naming fields except dimensions and filename)
       const newConceptKey = [
         merged.brand, merged.initiative, merged.variation, merged.angle,
         merged.source, merged.product, merged.contentType, merged.creativeType,
         merged.copySlug, merged.date,
       ].join("__");
 
-      return db
+      const rows = await db
         .update(schema.uploadQueue)
         .set({
           ...updates,
           generatedAdName,
           conceptKey: newConceptKey,
-          updatedAt: sql`datetime('now')`,
+          updatedAt: sql`now()`,
         })
         .where(eq(schema.uploadQueue.id, id))
-        .returning()
-        .get();
+        .returning();
+      return rows[0];
     }),
 
   addSize: publicProcedure
@@ -186,9 +180,9 @@ const uploadQueueRouter = t.router({
       conceptKey: z.string(),
       dimensions: z.string(),
     }))
-    .mutation(({ input }) => {
-      const existing = db.select().from(schema.uploadQueue).all()
-        .find((r: any) => r.conceptKey === input.conceptKey);
+    .mutation(async ({ input }) => {
+      const allRows = await db.select().from(schema.uploadQueue);
+      const existing = allRows.find((r: any) => r.conceptKey === input.conceptKey);
       if (!existing) throw new Error("Concept not found");
       const generatedAdName = generateAdName({
         brand: existing.brand, initiative: existing.initiative,
@@ -198,7 +192,7 @@ const uploadQueueRouter = t.router({
         dimensions: input.dimensions, copySlug: existing.copySlug,
         filename: existing.filename, date: existing.date,
       });
-      return db.insert(schema.uploadQueue).values({
+      const rows = await db.insert(schema.uploadQueue).values({
         brand: existing.brand, initiative: existing.initiative,
         variation: existing.variation, angle: existing.angle,
         source: existing.source, product: existing.product,
@@ -213,25 +207,24 @@ const uploadQueueRouter = t.router({
         status: "draft", metaAdId: null, metaCreativeId: null,
         errorMessage: null, uploadedAt: null, fileUrl: null,
         fileKey: null, fileMimeType: null, fileSize: null,
-      }).returning().get();
+      }).returning();
+      return rows[0];
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => {
-      db.delete(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.id, input.id))
-        .run();
+    .mutation(async ({ input }) => {
+      await db.delete(schema.uploadQueue)
+        .where(eq(schema.uploadQueue.id, input.id));
       return { success: true };
     }),
 
   bulkDelete: publicProcedure
     .input(z.object({ ids: z.array(z.number()) }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       for (const id of input.ids) {
-        db.delete(schema.uploadQueue)
-          .where(eq(schema.uploadQueue.id, id))
-          .run();
+        await db.delete(schema.uploadQueue)
+          .where(eq(schema.uploadQueue.id, id));
       }
       return { success: true };
     }),
@@ -243,17 +236,15 @@ const uploadQueueRouter = t.router({
         status: z.enum(["draft", "ready", "uploading", "uploaded", "error"]),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       for (const id of input.ids) {
-        db.update(schema.uploadQueue)
-          .set({ status: input.status, updatedAt: sql`datetime('now')` })
-          .where(eq(schema.uploadQueue.id, id))
-          .run();
+        await db.update(schema.uploadQueue)
+          .set({ status: input.status, updatedAt: sql`now()` })
+          .where(eq(schema.uploadQueue.id, id));
       }
       return { success: true };
     }),
 
-  // Merge secondary concept groups into a primary — keeps each row's own dimensions
   merge: publicProcedure
     .input(
       z.object({
@@ -261,24 +252,21 @@ const uploadQueueRouter = t.router({
         secondaryConceptKeys: z.array(z.string()),
       })
     )
-    .mutation(({ input }) => {
-      // Get the primary row to use as the field template
-      const primary = db
+    .mutation(async ({ input }) => {
+      const primaryRows = await db
         .select()
         .from(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey))
-        .get();
+        .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey));
+      const primary = primaryRows[0];
       if (!primary) throw new Error("Primary concept not found");
 
       for (const sourceKey of input.secondaryConceptKeys) {
-        const sourceRows = db
+        const sourceRows = await db
           .select()
           .from(schema.uploadQueue)
-          .where(eq(schema.uploadQueue.conceptKey, sourceKey))
-          .all();
+          .where(eq(schema.uploadQueue.conceptKey, sourceKey));
 
         for (const row of sourceRows) {
-          // Keep the row's own dimensions; inherit everything else from primary
           const newAdName = generateAdName({
             brand: primary.brand,
             initiative: primary.initiative,
@@ -294,7 +282,7 @@ const uploadQueueRouter = t.router({
             date: primary.date,
           });
 
-          db.update(schema.uploadQueue)
+          await db.update(schema.uploadQueue)
             .set({
               brand: primary.brand,
               initiative: primary.initiative,
@@ -309,10 +297,9 @@ const uploadQueueRouter = t.router({
               date: primary.date,
               conceptKey: input.primaryConceptKey,
               generatedAdName: newAdName,
-              updatedAt: sql`datetime('now')`,
+              updatedAt: sql`now()`,
             })
-            .where(eq(schema.uploadQueue.id, row.id))
-            .run();
+            .where(eq(schema.uploadQueue.id, row.id));
         }
       }
       return { success: true };
@@ -323,20 +310,18 @@ const uploadQueueRouter = t.router({
 const copyLibraryRouter = t.router({
   list: publicProcedure
     .input(z.object({ status: z.string().optional() }).optional())
-    .query(({ input }) => {
+    .query(async ({ input }) => {
       if (input?.status) {
         return db
           .select()
           .from(schema.copyLibrary)
-          .where(eq(schema.copyLibrary.status, input.status as any))
-          .orderBy(desc(schema.copyLibrary.createdAt))
-          .all();
+          .where(eq(schema.copyLibrary.status, input.status))
+          .orderBy(desc(schema.copyLibrary.createdAt));
       }
       return db
         .select()
         .from(schema.copyLibrary)
-        .orderBy(desc(schema.copyLibrary.createdAt))
-        .all();
+        .orderBy(desc(schema.copyLibrary.createdAt));
     }),
 
   create: publicProcedure
@@ -349,8 +334,9 @@ const copyLibraryRouter = t.router({
         status: z.enum(["active", "draft", "retired"]).default("active"),
       })
     )
-    .mutation(({ input }) => {
-      return db.insert(schema.copyLibrary).values(input).returning().get();
+    .mutation(async ({ input }) => {
+      const rows = await db.insert(schema.copyLibrary).values(input).returning();
+      return rows[0];
     }),
 
   update: publicProcedure
@@ -364,22 +350,21 @@ const copyLibraryRouter = t.router({
         status: z.enum(["active", "draft", "retired"]).optional(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updates } = input;
-      return db
+      const rows = await db
         .update(schema.copyLibrary)
-        .set({ ...updates, updatedAt: sql`datetime('now')` })
+        .set({ ...updates, updatedAt: sql`now()` })
         .where(eq(schema.copyLibrary.id, id))
-        .returning()
-        .get();
+        .returning();
+      return rows[0];
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => {
-      db.delete(schema.copyLibrary)
-        .where(eq(schema.copyLibrary.id, input.id))
-        .run();
+    .mutation(async ({ input }) => {
+      await db.delete(schema.copyLibrary)
+        .where(eq(schema.copyLibrary.id, input.id));
       return { success: true };
     }),
 });
@@ -388,20 +373,18 @@ const copyLibraryRouter = t.router({
 const angleBankRouter = t.router({
   list: publicProcedure
     .input(z.object({ status: z.string().optional() }).optional())
-    .query(({ input }) => {
+    .query(async ({ input }) => {
       if (input?.status) {
         return db
           .select()
           .from(schema.angleBank)
-          .where(eq(schema.angleBank.status, input.status as any))
-          .orderBy(desc(schema.angleBank.createdAt))
-          .all();
+          .where(eq(schema.angleBank.status, input.status))
+          .orderBy(desc(schema.angleBank.createdAt));
       }
       return db
         .select()
         .from(schema.angleBank)
-        .orderBy(desc(schema.angleBank.createdAt))
-        .all();
+        .orderBy(desc(schema.angleBank.createdAt));
     }),
 
   create: publicProcedure
@@ -416,8 +399,9 @@ const angleBankRouter = t.router({
         status: z.enum(["active", "testing", "retired"]).default("active"),
       })
     )
-    .mutation(({ input }) => {
-      return db.insert(schema.angleBank).values(input).returning().get();
+    .mutation(async ({ input }) => {
+      const rows = await db.insert(schema.angleBank).values(input).returning();
+      return rows[0];
     }),
 
   update: publicProcedure
@@ -433,34 +417,32 @@ const angleBankRouter = t.router({
         status: z.enum(["active", "testing", "retired"]).optional(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updates } = input;
-      return db
+      const rows = await db
         .update(schema.angleBank)
-        .set({ ...updates, updatedAt: sql`datetime('now')` })
+        .set({ ...updates, updatedAt: sql`now()` })
         .where(eq(schema.angleBank.id, id))
-        .returning()
-        .get();
+        .returning();
+      return rows[0];
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => {
-      db.delete(schema.angleBank)
-        .where(eq(schema.angleBank.id, input.id))
-        .run();
+    .mutation(async ({ input }) => {
+      await db.delete(schema.angleBank)
+        .where(eq(schema.angleBank.id, input.id));
       return { success: true };
     }),
 });
 
 // ─── Field Options ──────────────────────────────────────────────
 const fieldOptionsRouter = t.router({
-  list: publicProcedure.query(() => {
+  list: publicProcedure.query(async () => {
     return db
       .select()
       .from(schema.fieldOptions)
-      .orderBy(schema.fieldOptions.field, schema.fieldOptions.sortOrder)
-      .all();
+      .orderBy(schema.fieldOptions.field, schema.fieldOptions.sortOrder);
   }),
 
   create: publicProcedure
@@ -473,8 +455,9 @@ const fieldOptionsRouter = t.router({
         isActive: z.boolean().default(true),
       })
     )
-    .mutation(({ input }) => {
-      return db.insert(schema.fieldOptions).values(input).returning().get();
+    .mutation(async ({ input }) => {
+      const rows = await db.insert(schema.fieldOptions).values(input).returning();
+      return rows[0];
     }),
 
   update: publicProcedure
@@ -487,30 +470,30 @@ const fieldOptionsRouter = t.router({
         isActive: z.boolean().optional(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updates } = input;
-      return db
+      const rows = await db
         .update(schema.fieldOptions)
-        .set({ ...updates, updatedAt: sql`datetime('now')` })
+        .set({ ...updates, updatedAt: sql`now()` })
         .where(eq(schema.fieldOptions.id, id))
-        .returning()
-        .get();
+        .returning();
+      return rows[0];
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => {
-      db.delete(schema.fieldOptions)
-        .where(eq(schema.fieldOptions.id, input.id))
-        .run();
+    .mutation(async ({ input }) => {
+      await db.delete(schema.fieldOptions)
+        .where(eq(schema.fieldOptions.id, input.id));
       return { success: true };
     }),
 });
 
 // ─── Meta Settings ──────────────────────────────────────────────
 const metaSettingsRouter = t.router({
-  get: publicProcedure.query(() => {
-    return db.select().from(schema.metaSettings).get();
+  get: publicProcedure.query(async () => {
+    const rows = await db.select().from(schema.metaSettings);
+    return rows[0] ?? null;
   }),
 
   update: publicProcedure
@@ -529,21 +512,24 @@ const metaSettingsRouter = t.router({
         utmTemplate: z.string().optional().nullable(),
       })
     )
-    .mutation(({ input }) => {
-      const existing = db.select().from(schema.metaSettings).get();
+    .mutation(async ({ input }) => {
+      const existingRows = await db.select().from(schema.metaSettings);
+      const existing = existingRows[0];
       if (existing) {
-        return db
+        const rows = await db
           .update(schema.metaSettings)
-          .set({ ...input, updatedAt: sql`datetime('now')` })
+          .set({ ...input, updatedAt: sql`now()` })
           .where(eq(schema.metaSettings.id, existing.id))
-          .returning()
-          .get();
+          .returning();
+        return rows[0];
       }
-      return db.insert(schema.metaSettings).values(input).returning().get();
+      const rows = await db.insert(schema.metaSettings).values(input).returning();
+      return rows[0];
     }),
 
   getAdSets: publicProcedure.query(async () => {
-    const settings = db.select().from(schema.metaSettings).get();
+    const settingsRows = await db.select().from(schema.metaSettings);
+    const settings = settingsRows[0];
     if (!settings?.accessToken || !settings?.adAccountId) return [];
     try {
       const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?fields=id,name,status,campaign{id,name}&filtering=[{"field":"status","operator":"IN","value":["ACTIVE","PAUSED"]}]&access_token=${settings.accessToken}&limit=100`;

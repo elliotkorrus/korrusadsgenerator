@@ -1,45 +1,34 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
+import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 
 const timestamps = {
-  createdAt: text("created_at")
-    .default(sql`(datetime('now'))`)
-    .notNull(),
-  updatedAt: text("updated_at")
-    .default(sql`(datetime('now'))`)
-    .notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 };
 
-export const copyLibrary = sqliteTable("copy_library", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const copyLibrary = pgTable("copy_library", {
+  id: serial("id").primaryKey(),
   copySlug: text("copy_slug").notNull().unique(),
   headline: text("headline").notNull(),
   bodyCopy: text("body_copy").notNull(),
   product: text("product").notNull().default("OIO"),
-  status: text("status", { enum: ["active", "draft", "retired"] })
-    .notNull()
-    .default("active"),
+  status: text("status").notNull().default("active"),
   ...timestamps,
 });
 
-export const angleBank = sqliteTable("angle_bank", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const angleBank = pgTable("angle_bank", {
+  id: serial("id").primaryKey(),
   angleSlug: text("angle_slug").notNull().unique(),
   description: text("description").notNull(),
   example: text("example").notNull(),
   product: text("product").notNull().default("OIO"),
-  funnelStage: text("funnel_stage", { enum: ["TOF", "MOF", "BOF", "ALL"] })
-    .notNull()
-    .default("ALL"),
+  funnelStage: text("funnel_stage").notNull().default("ALL"),
   sourceTypeFit: text("source_type_fit"),
-  status: text("status", { enum: ["active", "testing", "retired"] })
-    .notNull()
-    .default("active"),
+  status: text("status").notNull().default("active"),
   ...timestamps,
 });
 
-export const uploadQueue = sqliteTable("upload_queue", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const uploadQueue = pgTable("upload_queue", {
+  id: serial("id").primaryKey(),
   brand: text("brand").notNull().default("OIO"),
   initiative: text("initiative").notNull().default(""),
   variation: text("variation").notNull().default("V1"),
@@ -62,32 +51,27 @@ export const uploadQueue = sqliteTable("upload_queue", {
   fileKey: text("file_key"),
   fileMimeType: text("file_mime_type"),
   fileSize: integer("file_size"),
-  status: text("status", {
-    enum: ["draft", "ready", "uploading", "uploaded", "error"],
-  })
-    .notNull()
-    .default("draft"),
+  status: text("status").notNull().default("draft"),
   metaAdId: text("meta_ad_id"),
   metaCreativeId: text("meta_creative_id"),
   errorMessage: text("error_message"),
   uploadedAt: text("uploaded_at"),
   uploadedBy: integer("uploaded_by"),
   conceptKey: text("concept_key"),
-  handle: text("handle"), // Which FB/IG handle to run through (e.g. whitelisted creator handle). Does not affect ad name.
-  cta: text("cta"), // Per-ad CTA override (e.g. "SHOP_NOW"), falls back to meta_settings default
-  displayUrl: text("display_url"), // Per-ad display URL override (e.g. "korrus.com"), falls back to default
-  agency: text("agency"),  // Which agency/partner delivered this creative (e.g. "Agency A", "Agency B", "Internal")
+  handle: text("handle"),
+  cta: text("cta"),
+  displayUrl: text("display_url"),
+  agency: text("agency"),
   ...timestamps,
 });
 
-export const metaSettings = sqliteTable("meta_settings", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const metaSettings = pgTable("meta_settings", {
+  id: serial("id").primaryKey(),
   appId: text("app_id"),
   appSecret: text("app_secret"),
   accessToken: text("access_token"),
   adAccountId: text("ad_account_id"),
   pageId: text("page_id"),
-  // Upload defaults
   instagramUserId: text("instagram_user_id"),
   instagramHandle: text("instagram_handle"),
   defaultDestinationUrl: text("default_destination_url"),
@@ -97,12 +81,12 @@ export const metaSettings = sqliteTable("meta_settings", {
   ...timestamps,
 });
 
-export const fieldOptions = sqliteTable("field_options", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const fieldOptions = pgTable("field_options", {
+  id: serial("id").primaryKey(),
   field: text("field").notNull(),
   value: text("value").notNull(),
   label: text("label"),
   sortOrder: integer("sort_order").notNull().default(0),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  isActive: boolean("is_active").notNull().default(true),
   ...timestamps,
 });
