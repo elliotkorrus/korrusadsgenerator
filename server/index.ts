@@ -39,24 +39,47 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
     res.status(400).json({ error: "No file provided" });
     return;
   }
-  // Convert to base64 data URI — stored in Postgres, survives redeploys
-  const base64 = req.file.buffer.toString("base64");
-  const dataUri = `data:${req.file.mimetype};base64,${base64}`;
+
   const fileKey = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(req.file.originalname)}`;
+  const isVideo = req.file.mimetype.startsWith("video/");
+  const isLarge = req.file.size > 5 * 1024 * 1024; // 5MB threshold
 
-  // Also save to disk as a fallback for local dev
-  try {
-    const { writeFileSync } = require("fs");
-    writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
-  } catch { /* ignore in production */ }
+  // For videos or large files: save to disk and serve via URL
+  // For small images: keep base64 for instant preview in the dashboard
+  if (isVideo || isLarge) {
+    try {
+      const { writeFileSync } = require("fs");
+      writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
+    } catch (err: any) {
+      res.status(500).json({ error: `Failed to save file: ${err.message}` });
+      return;
+    }
+    res.json({
+      fileUrl: `/uploads/${fileKey}`,
+      fileKey,
+      fileMimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      originalName: req.file.originalname,
+    });
+  } else {
+    // Small images: base64 data URI for instant preview
+    const base64 = req.file.buffer.toString("base64");
+    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
 
-  res.json({
-    fileUrl: dataUri,
-    fileKey,
-    fileMimeType: req.file.mimetype,
-    fileSize: req.file.size,
-    originalName: req.file.originalname,
-  });
+    // Also save to disk as backup
+    try {
+      const { writeFileSync } = require("fs");
+      writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
+    } catch { /* ignore */ }
+
+    res.json({
+      fileUrl: dataUri,
+      fileKey,
+      fileMimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      originalName: req.file.originalname,
+    });
+  }
 });
 
 // Download a remote file and return as base64 data URI
