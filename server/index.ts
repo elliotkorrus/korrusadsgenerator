@@ -116,8 +116,8 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
   const destinationUrl = ad.destinationUrl || metaSettings?.defaultDestinationUrl || "";
   const displayUrl = ad.displayUrl || metaSettings?.defaultDisplayUrl || "";
   const cta = ad.cta || metaSettings?.defaultCta || "SHOP_NOW";
-  const instagramUserId = metaSettings?.instagramUserId || "";
-  const pageId = metaSettings?.pageId || "";
+  const pageId = ad.pageId || metaSettings?.pageId || "";
+  const instagramUserId = ad.instagramAccountId || metaSettings?.instagramUserId || "";
   const utmTemplate = metaSettings?.utmTemplate || "";
 
   const missing: string[] = [];

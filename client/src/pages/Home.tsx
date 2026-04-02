@@ -644,6 +644,7 @@ export default function Home() {
   const { data: rawAllItems = [] } = trpc.queue.list.useQuery({});
   const allItems = rawAllItems as QueueItem[];
   const drawerItem = useMemo(() => drawerItemId ? allItems.find(i => i.id === drawerItemId) || null : null, [drawerItemId, allItems]);
+  const { data: metaDefaults } = trpc.meta.get.useQuery();
   const activeFocusView = FOCUS_VIEWS.find((v) => v.key === focusView) || FOCUS_VIEWS[0];
   const items = useMemo(
     () => allItems.filter((i) => (activeFocusView.statuses as readonly string[]).includes(i.status)),
@@ -2290,6 +2291,7 @@ export default function Home() {
             setDrawerItemId(null);
           }}
           onClose={() => setDrawerItemId(null)}
+          metaDefaults={metaDefaults}
         />
       )}
 

@@ -62,6 +62,8 @@ export const uploadQueue = pgTable("upload_queue", {
   cta: text("cta"),
   displayUrl: text("display_url"),
   agency: text("agency"),
+  pageId: text("page_id"),
+  instagramAccountId: text("instagram_account_id"),
   ...timestamps,
 });
 

@@ -26,6 +26,8 @@ type QueueItem = {
   cta: string | null;
   displayUrl: string | null;
   agency: string | null;
+  pageId: string | null;
+  instagramAccountId: string | null;
   fileUrl: string | null;
   fileKey: string | null;
   fileMimeType: string | null;
@@ -38,6 +40,14 @@ type QueueItem = {
   conceptKey: string | null;
 };
 
+type MetaDefaults = {
+  pageId?: string | null;
+  instagramUserId?: string | null;
+  defaultDestinationUrl?: string | null;
+  defaultDisplayUrl?: string | null;
+  defaultCta?: string | null;
+} | null | undefined;
+
 interface DetailDrawerProps {
   item: QueueItem;
   fieldOptions: Record<string, { value: string; label: string }[]>;
@@ -45,6 +55,7 @@ interface DetailDrawerProps {
   onUpdate: (id: number, updates: Record<string, any>) => void;
   onDelete: (id: number) => void;
   onClose: () => void;
+  metaDefaults?: MetaDefaults;
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
@@ -101,6 +112,7 @@ export default function DetailDrawer({
   onUpdate,
   onDelete,
   onClose,
+  metaDefaults,
 }: DetailDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -177,7 +189,7 @@ export default function DetailDrawer({
     );
   }
 
-  function renderTextInput(field: string, value: string, disabled = false) {
+  function renderTextInput(field: string, value: string, disabled = false, placeholder?: string) {
     return (
       <input
         type="text"
@@ -187,6 +199,7 @@ export default function DetailDrawer({
         }}
         value={value}
         disabled={disabled}
+        placeholder={placeholder}
         onChange={(e) => handleFieldChange(field, e.target.value)}
         onFocus={(e) => {
           (e.target as HTMLInputElement).style.borderColor = "rgba(0,153,198,0.6)";
@@ -486,6 +499,79 @@ export default function DetailDrawer({
           <div style={{ marginBottom: "16px" }}>
             <div style={labelStyle}>Filename</div>
             {renderTextInput("filename", item.filename)}
+          </div>
+
+          <div style={{ borderTop: "1px solid var(--surface-2)", marginBottom: "16px" }} />
+
+          {/* Meta Overrides */}
+          <div style={{ marginBottom: "16px" }}>
+            <div style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--text-secondary)",
+              marginBottom: "12px",
+            }}>
+              Meta Overrides
+            </div>
+
+            {/* Ad Set ID + Ad Set Name */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+              <div>
+                <div style={labelStyle}>Ad Set ID</div>
+                {renderTextInput("adSetId", item.adSetId || "")}
+              </div>
+              <div>
+                <div style={labelStyle}>Ad Set Name</div>
+                {renderTextInput("adSetName", item.adSetName || "")}
+              </div>
+            </div>
+
+            {/* Destination URL (full width) */}
+            <div style={{ marginBottom: "12px" }}>
+              <div style={labelStyle}>Destination URL</div>
+              {renderTextInput("destinationUrl", item.destinationUrl || "", false, metaDefaults?.defaultDestinationUrl || "Default from Meta Settings")}
+            </div>
+
+            {/* CTA + Display Link */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+              <div>
+                <div style={labelStyle}>CTA</div>
+                <select
+                  style={selectStyle}
+                  value={item.cta || ""}
+                  onChange={(e) => handleFieldChange("cta", e.target.value)}
+                  onFocus={(e) => {
+                    (e.target as HTMLSelectElement).style.borderColor = "rgba(0,153,198,0.6)";
+                  }}
+                  onBlur={(e) => {
+                    (e.target as HTMLSelectElement).style.borderColor = "var(--surface-3)";
+                  }}
+                >
+                  <option value="">{metaDefaults?.defaultCta ? `Default: ${metaDefaults.defaultCta}` : "--"}</option>
+                  {["SHOP_NOW", "LEARN_MORE", "SIGN_UP", "SUBSCRIBE", "DOWNLOAD", "GET_OFFER", "ORDER_NOW", "BOOK_NOW", "CONTACT_US"].map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div style={labelStyle}>Display Link</div>
+                {renderTextInput("displayUrl", item.displayUrl || "", false, metaDefaults?.defaultDisplayUrl || "Default from Meta Settings")}
+              </div>
+            </div>
+
+            {/* Facebook Page ID + Instagram Account ID */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+              <div>
+                <div style={labelStyle}>Facebook Page ID</div>
+                {renderTextInput("pageId", item.pageId || "", false, metaDefaults?.pageId || "Default from Meta Settings")}
+              </div>
+              <div>
+                <div style={labelStyle}>Instagram Account ID</div>
+                {renderTextInput("instagramAccountId", item.instagramAccountId || "", false, metaDefaults?.instagramUserId || "Default from Meta Settings")}
+              </div>
+            </div>
           </div>
 
           <div style={{ borderTop: "1px solid var(--surface-2)", marginBottom: "16px" }} />

@@ -67,6 +67,8 @@ const uploadQueueRouter = t.router({
         cta: z.string().optional().nullable(),
         displayUrl: z.string().optional().nullable(),
         agency: z.string().optional().nullable(),
+        pageId: z.string().optional().nullable(),
+        instagramAccountId: z.string().optional().nullable(),
       })
     )
     .mutation(async ({ input }) => {
@@ -123,6 +125,8 @@ const uploadQueueRouter = t.router({
         cta: z.string().optional().nullable(),
         displayUrl: z.string().optional().nullable(),
         agency: z.string().optional().nullable(),
+        pageId: z.string().optional().nullable(),
+        instagramAccountId: z.string().optional().nullable(),
         status: z
           .enum(["draft", "ready", "uploading", "uploaded", "error"])
           .optional(),
