@@ -58,6 +58,8 @@ const COLUMNS: { key: string; label: string; width: string; type: "text" | "sele
   { key: "filename", label: "Filename", width: "100px", type: "text" },
   { key: "date", label: "Date", width: "75px", type: "text" },
   { key: "adSetName", label: "Ad Set", width: "100px", type: "text" },
+  { key: "destinationUrl", label: "Dest URL", width: "110px", type: "text" },
+  { key: "cta", label: "CTA", width: "80px", type: "text" },
 ];
 
 interface Props {

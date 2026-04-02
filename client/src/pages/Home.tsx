@@ -1837,14 +1837,18 @@ export default function Home() {
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.brand || ""} onSave={(v) => updateConceptField(key, "brand", v)} disabled={isGroupLocked} placeholder="OIO" /></td>
+                        {/* Handle */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.handle || ""} onSave={(v) => updateConceptField(key, "handle", v)} disabled={isGroupLocked} placeholder="korruscircadian" /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.initiative || ""} onSave={(v) => updateConceptField(key, "initiative", v)} disabled={isGroupLocked} placeholder="s_001" /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.variation || ""} onSave={(v) => updateConceptField(key, "variation", v)} disabled={isGroupLocked} placeholder="v1" /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap">{angleOptions.length > 0 ? <InlineSelect value={shared.angle || ""} options={angleOptions} onSave={(v) => updateConceptField(key, "angle", v)} disabled={isGroupLocked} /> : <InlineText value={shared.angle || ""} onSave={(v) => updateConceptField(key, "angle", v)} disabled={isGroupLocked} placeholder="angle" />}</td>
+                        {/* Style (creativeType) — matches header order */}
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.creativeType || ""} options={creativeTypeOpts} onSave={(v) => updateConceptField(key, "creativeType", v)} disabled={isGroupLocked} /></td>
+                        {/* Producer (source) */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.source || ""} options={sourceOpts} onSave={(v) => updateConceptField(key, "source", v)} disabled={isGroupLocked} /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.product || ""} options={productOpts} onSave={(v) => updateConceptField(key, "product", v)} disabled={isGroupLocked} /></td>
+                        {/* Format (contentType) */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.contentType || ""} options={contentTypeOpts} onSave={(v) => updateConceptField(key, "contentType", v)} disabled={isGroupLocked} /></td>
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.creativeType || ""} options={creativeTypeOpts} onSave={(v) => updateConceptField(key, "creativeType", v)} disabled={isGroupLocked} /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.copySlug || ""} options={copyOptions} onSave={(v) => updateConceptField(key, "copySlug", v)} disabled={isGroupLocked} /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.filename || ""} onSave={(v) => updateConceptField(key, "filename", v)} disabled={isGroupLocked} mono placeholder="filename" /></td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.date || ""} onSave={(v) => updateConceptField(key, "date", v)} disabled={isGroupLocked} mono placeholder="2026-03" /></td>
@@ -1876,10 +1880,6 @@ export default function Home() {
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
                         {/* CTA */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.cta || ""} onSave={(v) => updateConceptField(key, "cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /></td>
-                        {/* Handle */}
-                        <td className="px-3 py-1.5 whitespace-nowrap">
-                          <InlineText value={shared.handle || ""} onSave={(v) => updateConceptField(key, "handle", v)} disabled={isGroupLocked} placeholder="@creator" />
-                        </td>
                         {/* Actions */}
                         <td className="px-3 py-2 whitespace-nowrap">
                           <div className="flex items-center gap-1">
