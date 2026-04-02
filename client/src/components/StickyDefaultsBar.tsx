@@ -21,7 +21,6 @@ const FIELD_META: { key: string; label: string; type: "text" | "select"; placeho
   { key: "product", label: "Product", type: "select" },
   { key: "copySlug", label: "Copy", type: "select" },
   { key: "date", label: "Date", type: "text", placeholder: "0402" },
-  { key: "agency", label: "Agency", type: "text", placeholder: "Internal" },
 ];
 
 export default function StickyDefaultsBar({ defaults, onSetDefault, onToggleDefault, onReset, fieldOptions, angleOptions, copyOptions }: Props) {

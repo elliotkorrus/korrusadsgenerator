@@ -57,7 +57,6 @@ const COLUMNS: { key: string; label: string; width: string; type: "text" | "sele
   { key: "copySlug", label: "Copy", width: "90px", type: "select" },
   { key: "filename", label: "Filename", width: "100px", type: "text" },
   { key: "date", label: "Date", width: "75px", type: "text" },
-  { key: "agency", label: "Agency", width: "75px", type: "text" },
 ];
 
 interface Props {
