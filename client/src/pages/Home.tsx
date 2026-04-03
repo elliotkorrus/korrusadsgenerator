@@ -10,6 +10,9 @@ import CSVImportDialog from "../components/CSVImportDialog";
 import DetailDrawer from "../components/DetailDrawer";
 import SpreadsheetInbox, { PendingRow } from "../components/spreadsheet/SpreadsheetInbox";
 import StickyDefaultsBar from "../components/StickyDefaultsBar";
+import ValidationErrorModal from "../components/ValidationErrorModal";
+import AdSetPicker from "../components/AdSetPicker";
+import { useUploadProgress, stageName } from "../hooks/useUploadProgress";
 import { useStickyDefaults } from "../hooks/useStickyDefaults";
 import { groupFilesByBaseName } from "../utils/autoGroup";
 import {
@@ -103,6 +106,7 @@ const BATCH_EDITABLE_FIELDS = [
   { key: "date", label: "Date" },
   { key: "variation", label: "Variation" },
   { key: "copySlug", label: "Copy Slug" },
+  { key: "adSetId", label: "Ad Set" },
 ] as const;
 
 // Today's date in MMDDYY format
@@ -539,9 +543,17 @@ function ConceptCard({
             </div>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            <div className="flex items-center gap-1.5 col-span-2">
+              <span className="text-[10px] flex-shrink-0 w-14" style={{ color: "var(--text-muted)" }}>Ad Set</span>
+              <AdSetPicker
+                value={shared.adSetId || ""}
+                displayValue={shared.adSetName || ""}
+                onSelect={(id, name) => { onUpdateField("adSetId", id); onUpdateField("adSetName", name); }}
+                disabled={isGroupLocked}
+                compact
+              />
+            </div>
             {[
-              { label: "Ad Set ID", el: <InlineText value={shared.adSetId || ""} onSave={(v) => onUpdateField("adSetId", v)} disabled={isGroupLocked} mono placeholder="120..." /> },
-              { label: "Ad Set", el: <InlineText value={shared.adSetName || ""} onSave={(v) => onUpdateField("adSetName", v)} disabled={isGroupLocked} placeholder="Ad set name" /> },
               { label: "Dest URL", el: <InlineText value={shared.destinationUrl || ""} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /> },
               { label: "Display", el: <InlineText value={shared.displayUrl || ""} onSave={(v) => onUpdateField("displayUrl", v)} disabled={isGroupLocked} placeholder="korrus.com" /> },
               { label: "CTA", el: <InlineText value={shared.cta || ""} onSave={(v) => onUpdateField("cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /> },
@@ -642,11 +654,17 @@ export default function Home() {
   const [sendingIds, setSendingIds] = useState<Set<number>>(new Set());
   const [stubPayloads, setStubPayloads] = useState<Record<number, any>>({});
 
+  // Pre-upload validation state
+  const [validationErrors, setValidationErrors] = useState<Array<{ conceptKey: string; adName: string; missingFields: string[] }>>([]);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const validateMut = trpc.meta.validateForUpload.useMutation();
+
   // Always fetch all items for accurate group counts; filter client-side for the active view
   const { data: rawAllItems = [] } = trpc.queue.list.useQuery({});
   const allItems = rawAllItems as QueueItem[];
   const drawerItem = useMemo(() => drawerItemId ? allItems.find(i => i.id === drawerItemId) || null : null, [drawerItemId, allItems]);
   const { data: metaDefaults } = trpc.meta.get.useQuery();
+  const { data: adSetsForBatch } = trpc.meta.getAdSets.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
   const { data: handleBankEntries = [] } = trpc.handles.list.useQuery();
   const handleOptions = useMemo(() => handleBankEntries.map((h) => ({
     value: h.handle,
@@ -986,6 +1004,15 @@ export default function Home() {
   async function sendBatchToMeta(ids?: number[]) {
     setBatchSending(true);
     try {
+      // Pre-upload validation
+      const validation = await validateMut.mutateAsync({ adIds: ids || [] });
+      if (!validation.valid) {
+        setValidationErrors(validation.errors);
+        setShowValidationModal(true);
+        setBatchSending(false);
+        return;
+      }
+
       const metaToken = localStorage.getItem("app-token");
       const res = await fetch("/api/send-to-meta-batch", {
         method: "POST",
@@ -1010,9 +1037,12 @@ export default function Home() {
     }
   }
 
+  // Upload progress via SSE
+  const hasUploading = items.some((item) => item.status === "uploading");
+  const uploadProgress = useUploadProgress(hasUploading || batchSending);
+
   // Feature 5: poll every 3 seconds when any item is uploading
   useEffect(() => {
-    const hasUploading = items.some((item) => item.status === "uploading");
     if (!hasUploading) return;
     const interval = setInterval(() => {
       utils.queue.list.invalidate();
@@ -1107,6 +1137,11 @@ export default function Home() {
     if (!batchEditValue.trim()) return;
     for (const key of selectedKeys) {
       await updateConceptField(key, batchEditField, batchEditValue);
+      // When setting adSetId via batch edit, also resolve and set adSetName
+      if (batchEditField === "adSetId" && adSetsForBatch) {
+        const match = adSetsForBatch.find((s: any) => s.id === batchEditValue);
+        if (match) await updateConceptField(key, "adSetName", match.name);
+      }
     }
     setShowBatchFieldEdit(false);
     setBatchEditValue("");
@@ -1116,11 +1151,16 @@ export default function Home() {
 
   // Get select options for currently-selected batch edit field
   const batchEditFieldMeta = BATCH_EDITABLE_FIELDS.find((f) => f.key === batchEditField);
+  const adSetOpts = useMemo(() =>
+    (adSetsForBatch || []).map((s: any) => ({ value: s.id, label: `${s.name} (${s.status})` })),
+    [adSetsForBatch]
+  );
   const batchEditSelectOpts: Record<string, { value: string; label: string }[]> = {
     source: sourceOpts,
     product: productOpts,
     angle: angleOptions,
     copySlug: copyOptions,
+    adSetId: adSetOpts,
   };
 
   return (
@@ -1464,7 +1504,11 @@ export default function Home() {
             onMouseLeave={(e) => { if (!batchSending) (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
           >
             <CloudUpload className="w-3.5 h-3.5" />
-            {batchSending ? "Uploading…" : "Send All Ready to Meta"}
+            {batchSending
+              ? uploadProgress.length > 0
+                ? `Uploading (${uploadProgress.filter(p => p.stage === "done").length}/${uploadProgress.length})…`
+                : "Uploading…"
+              : "Send All Ready to Meta"}
           </button>
         )}
       </div>
@@ -1697,6 +1741,7 @@ export default function Home() {
             angleOptions={angleOptions}
             copyOptions={copyOptions}
             handleOptions={handleOptions}
+            adSetOptions={adSetOpts}
             selectedKeys={selectedKeys}
             onToggleSelect={toggleSelectGroup}
             onToggleAll={toggleAll}
@@ -1946,8 +1991,16 @@ export default function Home() {
                             })()}
                           </div>
                         </td>
-                        {/* Ad Set (shows adSetId — the numeric Meta ID needed for upload) */}
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.adSetId || ""} onSave={(v) => updateConceptField(key, "adSetId", v)} disabled={isGroupLocked} mono placeholder="120..." /></td>
+                        {/* Ad Set (picker fetches from Meta API) */}
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          <AdSetPicker
+                            value={shared.adSetId || ""}
+                            displayValue={shared.adSetName || ""}
+                            onSelect={(id, name) => { updateConceptField(key, "adSetId", id); updateConceptField(key, "adSetName", name); }}
+                            disabled={isGroupLocked}
+                            compact
+                          />
+                        </td>
                         {/* Dest URL */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
                         {/* CTA */}
@@ -2238,12 +2291,37 @@ export default function Home() {
                               ))}
 
                               {/* Uploading + uploaded + error status blocks */}
-                              {rows.filter((r) => r.status === "uploading" && !stubPayloads[r.id]).map((r) => (
-                                <div key={r.id} className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-2">
-                                  <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
-                                  <span className="text-[11px] text-blue-600">{r.dimensions} — Sending to MANUS…</span>
-                                </div>
-                              ))}
+                              {rows.filter((r) => r.status === "uploading" && !stubPayloads[r.id]).length > 0 && (() => {
+                                const conceptProgress = uploadProgress.find((p) => p.conceptKey === rows[0]?.conceptKey);
+                                return (
+                                  <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-3 space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                      <span className="text-[11px] text-blue-300 font-medium">
+                                        {conceptProgress
+                                          ? `${stageName(conceptProgress.stage)} — ${conceptProgress.message}`
+                                          : "Uploading to Meta..."}
+                                      </span>
+                                    </div>
+                                    {conceptProgress && conceptProgress.stage === "uploading_asset" && (
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex-1 h-1.5 bg-blue-900/50 rounded-full overflow-hidden">
+                                          <div
+                                            className="h-full bg-blue-400 rounded-full transition-all duration-300"
+                                            style={{ width: `${conceptProgress.chunkProgress}%` }}
+                                          />
+                                        </div>
+                                        <span className="text-[10px] text-blue-400/70 w-8 text-right">{conceptProgress.chunkProgress}%</span>
+                                      </div>
+                                    )}
+                                    {conceptProgress && (
+                                      <span className="text-[10px] text-blue-400/50">
+                                        Asset {conceptProgress.currentAsset} of {conceptProgress.totalAssets}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               {rows.filter((r) => r.status === "uploaded" && r.metaAdId).map((r) => (
                                 <div key={r.id} className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2">
                                   <CheckCircle2 className="w-3.5 h-3.5 text-green-700" />
@@ -2327,6 +2405,13 @@ export default function Home() {
       )}
 
       {/* Merge Dialog */}
+      {showValidationModal && validationErrors.length > 0 && (
+        <ValidationErrorModal
+          errors={validationErrors}
+          onClose={() => setShowValidationModal(false)}
+        />
+      )}
+
       {showMergeDialog && selectedKeys.size >= 2 && (
         <MergeDialog
           groups={grouped.filter((g) => selectedKeys.has(g.key))}

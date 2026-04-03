@@ -7,7 +7,7 @@ import multer from "multer";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -127,6 +127,38 @@ app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
       console.error("Background Meta upload error:", err.message);
     }
   })();
+});
+
+// ─── Upload Progress SSE endpoint ────────────────────────────────────
+app.get("/api/upload-progress", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  // Send current state immediately
+  const current = getAllProgress();
+  if (current.length > 0) {
+    res.write(`data: ${JSON.stringify(current)}\n\n`);
+  }
+
+  // Listen for updates
+  const onProgress = () => {
+    const all = getAllProgress();
+    res.write(`data: ${JSON.stringify(all)}\n\n`);
+  };
+  uploadProgressEmitter.on("progress", onProgress);
+
+  // Heartbeat every 15s to keep connection alive
+  const heartbeat = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 15000);
+
+  req.on("close", () => {
+    uploadProgressEmitter.off("progress", onProgress);
+    clearInterval(heartbeat);
+  });
 });
 
 // Legacy MANUS callback (still works for external integrations)

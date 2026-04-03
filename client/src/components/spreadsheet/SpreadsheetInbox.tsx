@@ -57,7 +57,7 @@ const COLUMNS: { key: string; label: string; width: string; type: "text" | "sele
   { key: "copySlug", label: "Copy", width: "90px", type: "select" },
   { key: "filename", label: "Filename", width: "100px", type: "text" },
   { key: "date", label: "Date", width: "75px", type: "text" },
-  { key: "adSetName", label: "Ad Set", width: "100px", type: "text" },
+  { key: "adSetId", label: "Ad Set", width: "130px", type: "select" },
   { key: "destinationUrl", label: "Dest URL", width: "110px", type: "text" },
   { key: "cta", label: "CTA", width: "80px", type: "text" },
 ];
@@ -73,6 +73,7 @@ interface Props {
   angleOptions: { value: string; label: string }[];
   copyOptions: { value: string; label: string }[];
   handleOptions: { value: string; label: string }[];
+  adSetOptions?: { value: string; label: string }[];
   selectedKeys: Set<string>;
   onToggleSelect: (key: string) => void;
   onToggleAll: () => void;
@@ -238,7 +239,15 @@ function Cell({
       onClick={() => { onFocus(); onStartEdit(); }}
       onMouseDown={(e) => { if (e.detail === 1) onFocus(); }}
     >
-      {value || <span style={{ opacity: 0.4 }}>-</span>}
+      {(() => {
+        if (!value) return <span style={{ opacity: 0.4 }}>-</span>;
+        // For ad set, show name label instead of raw ID
+        if (field === "adSetId" && options) {
+          const match = options.find((o) => o.value === value);
+          return match ? match.label : value;
+        }
+        return value;
+      })()}
       {/* Fill handle — small blue square at bottom-right of focused cell */}
       {isFocused && !disabled && onFillHandleMouseDown && (
         <div
@@ -274,6 +283,7 @@ export default function SpreadsheetInbox({
   angleOptions,
   copyOptions,
   handleOptions,
+  adSetOptions,
   selectedKeys,
   onToggleSelect,
   onToggleAll,
@@ -353,6 +363,7 @@ export default function SpreadsheetInbox({
     if (field === "angle") return angleOptions;
     if (field === "copySlug") return copyOptions;
     if (field === "handle") return handleOptions;
+    if (field === "adSetId") return adSetOptions;
     return fieldOptions[field];
   }
 
@@ -413,8 +424,15 @@ export default function SpreadsheetInbox({
 
   const handleCommit = useCallback((groupKey: string, field: string, value: string) => {
     onUpdateField(groupKey, field, value);
+    // When adSetId changes, also resolve and set adSetName
+    if (field === "adSetId" && adSetOptions) {
+      const match = adSetOptions.find((o) => o.value === value);
+      // Strip status suffix from label to get clean name
+      const name = match ? match.label.replace(/\s*\((?:ACTIVE|PAUSED)\)\s*$/, "") : "";
+      onUpdateField(groupKey, "adSetName", name);
+    }
     setEditingCell(null);
-  }, [onUpdateField]);
+  }, [onUpdateField, adSetOptions]);
 
   const dimColors: Record<string, string> = {
     "9:16": "#8b5cf6",

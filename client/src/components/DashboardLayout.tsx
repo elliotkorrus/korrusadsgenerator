@@ -10,6 +10,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import TokenExpiryBanner from "./TokenExpiryBanner";
 
 const FOCUS_VIEWS = [
   { icon: Inbox, label: "Inbox", key: "inbox", accent: "#f59e0b" },
@@ -145,7 +146,10 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0 overflow-auto" style={{ background: "var(--surface-0)" }}>{children}</main>
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <TokenExpiryBanner />
+        <main className="flex-1 min-w-0 overflow-auto" style={{ background: "var(--surface-0)" }}>{children}</main>
+      </div>
     </div>
   );
 }

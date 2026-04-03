@@ -12,9 +12,48 @@
 
 import { db, schema } from "./db.js";
 import { eq, inArray, sql } from "drizzle-orm";
+import { EventEmitter } from "events";
 
 const META_API_VERSION = "v21.0";
 const META_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
+
+// ── Upload Progress Tracking ────────────────────────────────────────
+
+export interface UploadProgress {
+  conceptKey: string;
+  adName: string;
+  stage: "uploading_asset" | "processing_video" | "creating_creative" | "creating_ad" | "done" | "error";
+  currentAsset: number;
+  totalAssets: number;
+  chunkProgress: number; // 0-100
+  message: string;
+}
+
+export const uploadProgressEmitter = new EventEmitter();
+const progressMap = new Map<string, UploadProgress>();
+
+function emitProgress(conceptKey: string, update: Partial<UploadProgress>) {
+  const existing = progressMap.get(conceptKey) || {
+    conceptKey,
+    adName: "",
+    stage: "uploading_asset" as const,
+    currentAsset: 0,
+    totalAssets: 0,
+    chunkProgress: 0,
+    message: "",
+  };
+  const merged = { ...existing, ...update };
+  progressMap.set(conceptKey, merged);
+  uploadProgressEmitter.emit("progress", merged);
+}
+
+export function getAllProgress(): UploadProgress[] {
+  return Array.from(progressMap.values());
+}
+
+function clearProgress(conceptKey: string) {
+  progressMap.delete(conceptKey);
+}
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -110,6 +149,84 @@ function placementType(dims: string): "story" | "feed" {
   return "feed"; // 4:5, 1:1, 16:9 are all feed placements
 }
 
+// ── Retry Utility ───────────────────────────────────────────────────
+
+/** Meta API error codes that should NOT be retried (permission/validation/token) */
+const NON_RETRYABLE_META_CODES = new Set([10, 100, 190, 200]);
+
+/** Meta API error codes that SHOULD be retried (rate limiting/transient) */
+const RETRYABLE_META_CODES = new Set([1, 2, 4, 17]);
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelay = 1000
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+
+      // Don't retry if we've exhausted attempts
+      if (attempt === maxRetries) break;
+
+      // Check for non-retryable Meta API error codes
+      const metaCode = err?.metaErrorCode as number | undefined;
+      if (metaCode !== undefined && NON_RETRYABLE_META_CODES.has(metaCode)) {
+        console.log(`[retryWithBackoff] Non-retryable Meta error code ${metaCode}, failing immediately`);
+        break;
+      }
+
+      // Check if this is a retryable error
+      const isRetryable =
+        (metaCode !== undefined && RETRYABLE_META_CODES.has(metaCode)) ||
+        err?.isHttp5xx === true ||
+        err?.name === "TypeError" || // network errors (fetch throws TypeError)
+        err?.code === "ECONNRESET" ||
+        err?.code === "ECONNREFUSED" ||
+        err?.code === "ETIMEDOUT" ||
+        err?.code === "UND_ERR_CONNECT_TIMEOUT";
+
+      if (!isRetryable) {
+        console.log(`[retryWithBackoff] Non-retryable error, failing immediately`);
+        break;
+      }
+
+      const delay = baseDelay * Math.pow(2, attempt);
+      console.log(`[retryWithBackoff] Attempt ${attempt + 1} failed, retrying in ${delay}ms...`, err?.message || err);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+/** Wraps a fetch call to Meta API: executes fetch, checks for 5xx/retryable errors, and throws enriched errors */
+async function metaFetch(url: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(url, init);
+
+  // Tag 5xx errors as retryable
+  if (res.status >= 500) {
+    const err: any = new Error(`Meta API returned HTTP ${res.status}`);
+    err.isHttp5xx = true;
+    throw err;
+  }
+
+  return res;
+}
+
+/** Parses a Meta API JSON response and throws enriched errors for retryable codes */
+function checkMetaResponse(data: any): void {
+  if (data.error) {
+    const err: any = new Error(JSON.stringify(data.error));
+    if (typeof data.error.code === "number") {
+      err.metaErrorCode = data.error.code;
+    }
+    throw err;
+  }
+}
+
 // ── Step 1: Upload Image ─────────────────────────────────────────────
 
 async function uploadImageToMeta(
@@ -124,22 +241,21 @@ async function uploadImageToMeta(
   formData.append("access_token", accessToken);
   formData.append("filename", new Blob([imageBuffer]), filename);
 
-  const res = await fetch(url, { method: "POST", body: formData });
-  const data = await res.json();
+  return retryWithBackoff(async () => {
+    const res = await metaFetch(url, { method: "POST", body: formData });
+    const data = await res.json();
+    checkMetaResponse(data);
 
-  if (data.error) {
-    throw new Error(`Meta image upload failed: ${JSON.stringify(data.error)}`);
-  }
+    // Response: { images: { <filename>: { hash: "abc123", ... } } }
+    const images = data.images;
+    if (!images) throw new Error(`Unexpected image upload response: ${JSON.stringify(data)}`);
 
-  // Response: { images: { <filename>: { hash: "abc123", ... } } }
-  const images = data.images;
-  if (!images) throw new Error(`Unexpected image upload response: ${JSON.stringify(data)}`);
+    const firstKey = Object.keys(images)[0];
+    const hash = images[firstKey]?.hash;
+    if (!hash) throw new Error(`No hash in image upload response: ${JSON.stringify(data)}`);
 
-  const firstKey = Object.keys(images)[0];
-  const hash = images[firstKey]?.hash;
-  if (!hash) throw new Error(`No hash in image upload response: ${JSON.stringify(data)}`);
-
-  return hash;
+    return hash;
+  });
 }
 
 // ── Step 1b: Upload Video (chunked for large files) ─────────────────
@@ -150,13 +266,14 @@ async function uploadVideoToMeta(
   adAccountId: string,
   accessToken: string,
   videoBuffer: Buffer,
-  filename: string
+  filename: string,
+  onProgress?: (pct: number) => void
 ): Promise<string> {
   const fileSize = videoBuffer.length;
 
   // Use chunked upload for files > 10MB
   if (fileSize > 10 * 1024 * 1024) {
-    return uploadVideoChunked(adAccountId, accessToken, videoBuffer, filename);
+    return uploadVideoChunked(adAccountId, accessToken, videoBuffer, filename, onProgress);
   }
 
   // Small files: direct upload
@@ -183,7 +300,8 @@ async function uploadVideoChunked(
   adAccountId: string,
   accessToken: string,
   videoBuffer: Buffer,
-  filename: string
+  filename: string,
+  onProgress?: (pct: number) => void
 ): Promise<string> {
   const fileSize = videoBuffer.length;
   const url = `${META_BASE}/act_${adAccountId}/advideos`;
@@ -220,14 +338,16 @@ async function uploadVideoChunked(
     chunkForm.append("start_offset", String(startOffset));
     chunkForm.append("video_file_chunk", new Blob([chunk]), filename);
 
-    const chunkRes = await fetch(url, { method: "POST", body: chunkForm });
-    const chunkData = await chunkRes.json();
-    if (chunkData.error) {
-      throw new Error(`Meta video chunk upload failed at offset ${startOffset}: ${JSON.stringify(chunkData.error)}`);
-    }
+    const chunkData = await retryWithBackoff(async () => {
+      const chunkRes = await metaFetch(url, { method: "POST", body: chunkForm });
+      const data = await chunkRes.json();
+      checkMetaResponse(data);
+      return data;
+    });
 
     startOffset = Number(chunkData.start_offset);
     endOffset = Number(chunkData.end_offset) || fileSize;
+    if (onProgress) onProgress(Math.round((startOffset / fileSize) * 100));
   }
 
   // Step 3: Finish upload
@@ -411,19 +531,18 @@ async function createAdCreative(
     body.url_tags = opts.utmTags;
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  return retryWithBackoff(async () => {
+    const res = await metaFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    checkMetaResponse(data);
+
+    if (!data.id) throw new Error(`No creative ID in response: ${JSON.stringify(data)}`);
+    return data.id as string;
   });
-  const data = await res.json();
-
-  if (data.error) {
-    throw new Error(`Meta creative creation failed: ${JSON.stringify(data.error)}`);
-  }
-
-  if (!data.id) throw new Error(`No creative ID in response: ${JSON.stringify(data)}`);
-  return data.id;
 }
 
 // ── Step 3: Create the Ad ────────────────────────────────────────────
@@ -439,25 +558,24 @@ async function createAd(
 ): Promise<string> {
   const url = `${META_BASE}/act_${adAccountId}/ads`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: opts.name,
-      adset_id: opts.adSetId,
-      status: "PAUSED",
-      access_token: accessToken,
-      creative: { creative_id: opts.creativeId },
-    }),
+  return retryWithBackoff(async () => {
+    const res = await metaFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: opts.name,
+        adset_id: opts.adSetId,
+        status: "PAUSED",
+        access_token: accessToken,
+        creative: { creative_id: opts.creativeId },
+      }),
+    });
+    const data = await res.json();
+    checkMetaResponse(data);
+
+    if (!data.id) throw new Error(`No ad ID in response: ${JSON.stringify(data)}`);
+    return data.id as string;
   });
-  const data = await res.json();
-
-  if (data.error) {
-    throw new Error(`Meta ad creation failed: ${JSON.stringify(data.error)}`);
-  }
-
-  if (!data.id) throw new Error(`No ad ID in response: ${JSON.stringify(data)}`);
-  return data.id;
 }
 
 // ── Orchestrator: upload a concept group ─────────────────────────────
@@ -526,15 +644,26 @@ async function uploadConceptGroup(
       .where(inArray(schema.uploadQueue.id, adIds));
 
     // Step 1: Upload all assets (images + videos)
+    const totalAssets = rows.filter((r) => r.fileUrl).length;
+    let currentAsset = 0;
+    emitProgress(conceptKey, { adName: metaAdName, totalAssets, stage: "uploading_asset", message: "Starting upload..." });
+
     const assetEntries: AssetEntry[] = [];
     for (const row of rows) {
       if (!row.fileUrl) continue;
+      currentAsset++;
+      emitProgress(conceptKey, { currentAsset, chunkProgress: 0, message: `Fetching ${row.dimensions} asset from storage...` });
+
       const { buffer, mimeType } = await fetchFileBuffer(row.fileUrl);
       const filename = row.filename || `${row.id}`;
 
       if (isVideo(mimeType, filename)) {
         const videoFilename = filename.includes(".") ? filename : `${filename}.mp4`;
-        const videoId = await uploadVideoToMeta(meta.adAccountId, meta.accessToken, buffer, videoFilename);
+        emitProgress(conceptKey, { message: `Uploading ${row.dimensions} video (${(buffer.length/1024/1024).toFixed(0)}MB)...` });
+        const videoId = await uploadVideoToMeta(meta.adAccountId, meta.accessToken, buffer, videoFilename, (pct) => {
+          emitProgress(conceptKey, { chunkProgress: pct });
+        });
+        emitProgress(conceptKey, { stage: "processing_video", chunkProgress: 100, message: `Waiting for ${row.dimensions} video processing...` });
         assetEntries.push({
           id: videoId,
           type: "video",
@@ -542,7 +671,9 @@ async function uploadConceptGroup(
         });
       } else {
         const imgFilename = filename.includes(".") ? filename : `${filename}.jpg`;
+        emitProgress(conceptKey, { message: `Uploading ${row.dimensions} image...` });
         const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, imgFilename);
+        emitProgress(conceptKey, { chunkProgress: 100 });
         assetEntries.push({
           id: hash,
           type: "image",
@@ -552,6 +683,7 @@ async function uploadConceptGroup(
     }
 
     // Step 2: Create creative
+    emitProgress(conceptKey, { stage: "creating_creative", chunkProgress: 0, message: "Creating ad creative..." });
     const creativeId = await createAdCreative(meta.adAccountId, meta.accessToken, {
       name: metaAdName,
       pageId,
@@ -566,6 +698,7 @@ async function uploadConceptGroup(
     });
 
     // Step 3: Create ad
+    emitProgress(conceptKey, { stage: "creating_ad", message: "Creating ad in Meta..." });
     const metaAdId = await createAd(meta.adAccountId, meta.accessToken, {
       name: metaAdName,
       adSetId,
@@ -584,10 +717,15 @@ async function uploadConceptGroup(
       })
       .where(inArray(schema.uploadQueue.id, adIds));
 
+    emitProgress(conceptKey, { stage: "done", chunkProgress: 100, message: "Upload complete!" });
+    setTimeout(() => clearProgress(conceptKey), 10000); // Clear after 10s
+
     return { conceptKey, adIds, success: true, metaAdId, metaCreativeId: creativeId };
   } catch (err: any) {
     // Mark all rows as error
     const errorMsg = err.message || String(err);
+    emitProgress(conceptKey, { stage: "error", message: errorMsg });
+    setTimeout(() => clearProgress(conceptKey), 30000); // Clear after 30s
     await db
       .update(schema.uploadQueue)
       .set({

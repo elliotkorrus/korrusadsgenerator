@@ -80,6 +80,7 @@ export const metaSettings = pgTable("meta_settings", {
   defaultDisplayUrl: text("default_display_url"),
   defaultCta: text("default_cta"),
   utmTemplate: text("utm_template"),
+  tokenExpiresAt: timestamp("token_expires_at"),
   ...timestamps,
 });
 
