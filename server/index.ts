@@ -33,7 +33,7 @@ app.use("/uploads", express.static(uploadsDir));
 
 // File upload endpoint — stores in memory, returns base64 data URI
 // This avoids Railway's ephemeral disk (files lost on redeploy)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
