@@ -70,14 +70,33 @@ interface UploadResult {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/** Convert a base64 data URI to a Buffer + mime type */
-function dataUriToBuffer(dataUri: string): { buffer: Buffer; mimeType: string } {
-  const match = dataUri.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) throw new Error("Invalid data URI");
-  return {
-    mimeType: match[1],
-    buffer: Buffer.from(match[2], "base64"),
-  };
+/** Fetch a file from a URL (R2 public URL) or decode a base64 data URI */
+async function fetchFileBuffer(fileUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  // Handle legacy base64 data URIs
+  const dataMatch = fileUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataMatch) {
+    return {
+      mimeType: dataMatch[1],
+      buffer: Buffer.from(dataMatch[2], "base64"),
+    };
+  }
+
+  // Handle HTTP URLs (R2, etc.)
+  const res = await fetch(fileUrl);
+  if (!res.ok) throw new Error(`Failed to fetch file from ${fileUrl}: HTTP ${res.status}`);
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { buffer, mimeType: contentType };
+}
+
+/** Check if a mime type or file extension indicates video */
+function isVideo(mimeType: string, filename?: string): boolean {
+  if (mimeType.startsWith("video/")) return true;
+  if (filename) {
+    const ext = filename.split(".").pop()?.toLowerCase();
+    return ["mp4", "mov", "avi", "webm", "mkv", "m4v"].includes(ext || "");
+  }
+  return false;
 }
 
 /** Classify dimension string into feed or story placement */
@@ -118,10 +137,59 @@ async function uploadImageToMeta(
   return hash;
 }
 
+// ── Step 1b: Upload Video ────────────────────────────────────────────
+
+async function uploadVideoToMeta(
+  adAccountId: string,
+  accessToken: string,
+  videoBuffer: Buffer,
+  filename: string
+): Promise<string> {
+  const url = `${META_BASE}/act_${adAccountId}/advideos`;
+
+  const formData = new FormData();
+  formData.append("access_token", accessToken);
+  formData.append("source", new Blob([videoBuffer]), filename);
+  formData.append("title", filename);
+
+  const res = await fetch(url, { method: "POST", body: formData });
+  const data = await res.json();
+
+  if (data.error) {
+    throw new Error(`Meta video upload failed: ${JSON.stringify(data.error)}`);
+  }
+
+  if (!data.id) throw new Error(`No video ID in response: ${JSON.stringify(data)}`);
+
+  // Wait for video to be ready (Meta processes videos async)
+  const videoId = data.id;
+  let attempts = 0;
+  const maxAttempts = 30; // 5 minutes max
+  while (attempts < maxAttempts) {
+    await new Promise((r) => setTimeout(r, 10000)); // 10s intervals
+    const statusRes = await fetch(
+      `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
+    );
+    const statusData = await statusRes.json();
+    if (statusData.status?.video_status === "ready") break;
+    if (statusData.status?.video_status === "error") {
+      throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
+    }
+    attempts++;
+  }
+  if (attempts >= maxAttempts) {
+    throw new Error("Video processing timed out after 5 minutes");
+  }
+
+  return videoId;
+}
+
 // ── Step 2: Create Ad Creative ───────────────────────────────────────
 
-interface ImageEntry {
-  hash: string;
+interface AssetEntry {
+  /** For images: the image hash. For videos: the video ID */
+  id: string;
+  type: "image" | "video";
   placement: "feed" | "story";
 }
 
@@ -132,7 +200,7 @@ async function createAdCreative(
     name: string;
     pageId: string;
     instagramUserId: string;
-    images: ImageEntry[];
+    assets: AssetEntry[];
     bodyCopy: string;
     headline: string;
     displayUrl: string;
@@ -143,9 +211,10 @@ async function createAdCreative(
 ): Promise<string> {
   const url = `${META_BASE}/act_${adAccountId}/adcreatives`;
 
-  const hasFeed = opts.images.some((i) => i.placement === "feed");
-  const hasStory = opts.images.some((i) => i.placement === "story");
+  const hasFeed = opts.assets.some((i) => i.placement === "feed");
+  const hasStory = opts.assets.some((i) => i.placement === "story");
   const isMultiPlacement = hasFeed && hasStory;
+  const hasVideo = opts.assets.some((a) => a.type === "video");
 
   // ── object_story_spec: ALWAYS minimal when using asset_feed_spec ──
   const objectStorySpec: Record<string, any> = {
@@ -157,15 +226,8 @@ async function createAdCreative(
 
   if (isMultiPlacement) {
     // Multi-placement: use asset_feed_spec with placement customization
-    const imagesArray = opts.images.map((img) => ({
-      hash: img.hash,
-      adlabels: [{ name: img.placement === "feed" ? "feed_label" : "story_label" }],
-    }));
-
     const assetFeedSpec: Record<string, any> = {
-      ad_formats: ["SINGLE_IMAGE"],
       optimization_type: "PLACEMENT",
-      images: imagesArray,
       bodies: [{ text: opts.bodyCopy }],
       titles: [{ text: opts.headline }],
       descriptions: [{ text: opts.displayUrl || "" }],
@@ -183,7 +245,7 @@ async function createAdCreative(
             facebook_positions: ["feed", "marketplace", "video_feeds", "search"],
             instagram_positions: ["stream", "explore", "explore_home", "profile_feed", "ig_search"],
           },
-          image_label: { name: "feed_label" },
+          ...(hasVideo ? { video_label: { name: "feed_label" } } : { image_label: { name: "feed_label" } }),
         },
         {
           customization_spec: {
@@ -191,10 +253,24 @@ async function createAdCreative(
             facebook_positions: ["story"],
             instagram_positions: ["story"],
           },
-          image_label: { name: "story_label" },
+          ...(hasVideo ? { video_label: { name: "story_label" } } : { image_label: { name: "story_label" } }),
         },
       ],
     };
+
+    if (hasVideo) {
+      assetFeedSpec.ad_formats = ["SINGLE_VIDEO"];
+      assetFeedSpec.videos = opts.assets.map((a) => ({
+        video_id: a.id,
+        adlabels: [{ name: a.placement === "feed" ? "feed_label" : "story_label" }],
+      }));
+    } else {
+      assetFeedSpec.ad_formats = ["SINGLE_IMAGE"];
+      assetFeedSpec.images = opts.assets.map((a) => ({
+        hash: a.id,
+        adlabels: [{ name: a.placement === "feed" ? "feed_label" : "story_label" }],
+      }));
+    }
 
     body = {
       name: opts.name,
@@ -203,29 +279,50 @@ async function createAdCreative(
       asset_feed_spec: JSON.stringify(assetFeedSpec),
     };
   } else {
-    // Single image: use standard object_story_spec with link_data
-    const singleHash = opts.images[0]?.hash;
-    if (!singleHash) throw new Error("No image hash available");
+    // Single asset: use standard object_story_spec
+    const asset = opts.assets[0];
+    if (!asset) throw new Error("No asset available");
 
-    body = {
-      name: opts.name,
-      access_token: accessToken,
-      object_story_spec: JSON.stringify({
-        page_id: opts.pageId,
-        instagram_user_id: opts.instagramUserId,
-        link_data: {
-          image_hash: singleHash,
-          link: opts.destinationUrl,
-          message: opts.bodyCopy,
-          name: opts.headline,
-          caption: opts.displayUrl || undefined,
-          call_to_action: {
-            type: opts.cta,
-            value: { link: opts.destinationUrl },
+    if (asset.type === "video") {
+      body = {
+        name: opts.name,
+        access_token: accessToken,
+        object_story_spec: JSON.stringify({
+          page_id: opts.pageId,
+          instagram_user_id: opts.instagramUserId,
+          video_data: {
+            video_id: asset.id,
+            link_description: opts.bodyCopy,
+            title: opts.headline,
+            message: opts.bodyCopy,
+            call_to_action: {
+              type: opts.cta,
+              value: { link: opts.destinationUrl },
+            },
           },
-        },
-      }),
-    };
+        }),
+      };
+    } else {
+      body = {
+        name: opts.name,
+        access_token: accessToken,
+        object_story_spec: JSON.stringify({
+          page_id: opts.pageId,
+          instagram_user_id: opts.instagramUserId,
+          link_data: {
+            image_hash: asset.id,
+            link: opts.destinationUrl,
+            message: opts.bodyCopy,
+            name: opts.headline,
+            caption: opts.displayUrl || undefined,
+            call_to_action: {
+              type: opts.cta,
+              value: { link: opts.destinationUrl },
+            },
+          },
+        }),
+      };
+    }
   }
 
   if (opts.utmTags) {
@@ -345,17 +442,30 @@ async function uploadConceptGroup(
       .set({ status: "uploading", updatedAt: sql`now()` })
       .where(inArray(schema.uploadQueue.id, adIds));
 
-    // Step 1: Upload all images
-    const imageEntries: ImageEntry[] = [];
+    // Step 1: Upload all assets (images + videos)
+    const assetEntries: AssetEntry[] = [];
     for (const row of rows) {
       if (!row.fileUrl) continue;
-      const { buffer } = dataUriToBuffer(row.fileUrl);
-      const filename = `${row.filename || row.id}.jpg`;
-      const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, filename);
-      imageEntries.push({
-        hash,
-        placement: placementType(row.dimensions),
-      });
+      const { buffer, mimeType } = await fetchFileBuffer(row.fileUrl);
+      const filename = row.filename || `${row.id}`;
+
+      if (isVideo(mimeType, filename)) {
+        const videoFilename = filename.includes(".") ? filename : `${filename}.mp4`;
+        const videoId = await uploadVideoToMeta(meta.adAccountId, meta.accessToken, buffer, videoFilename);
+        assetEntries.push({
+          id: videoId,
+          type: "video",
+          placement: placementType(row.dimensions),
+        });
+      } else {
+        const imgFilename = filename.includes(".") ? filename : `${filename}.jpg`;
+        const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, imgFilename);
+        assetEntries.push({
+          id: hash,
+          type: "image",
+          placement: placementType(row.dimensions),
+        });
+      }
     }
 
     // Step 2: Create creative
@@ -363,7 +473,7 @@ async function uploadConceptGroup(
       name: primary.generatedAdName,
       pageId,
       instagramUserId,
-      images: imageEntries,
+      assets: assetEntries,
       bodyCopy,
       headline,
       displayUrl,
