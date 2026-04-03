@@ -8,6 +8,7 @@ import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady } from "./meta-upload.js";
+import { uploadToR2 } from "./r2.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploads");
@@ -32,53 +33,29 @@ app.use("/uploads", express.static(uploadsDir));
 
 // File upload endpoint — stores in memory, returns base64 data URI
 // This avoids Railway's ephemeral disk (files lost on redeploy)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
-app.post("/api/upload", upload.single("file"), (req, res) => {
+app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "No file provided" });
     return;
   }
 
-  const fileKey = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(req.file.originalname)}`;
-  const isVideo = req.file.mimetype.startsWith("video/");
-  const isLarge = req.file.size > 5 * 1024 * 1024; // 5MB threshold
+  try {
+    // Upload ALL files to Cloudflare R2 — returns a public URL
+    const publicUrl = await uploadToR2(req.file.buffer, req.file.originalname, req.file.mimetype);
+    const fileKey = publicUrl.split("/").pop() || req.file.originalname;
 
-  // For videos or large files: save to disk and serve via URL
-  // For small images: keep base64 for instant preview in the dashboard
-  if (isVideo || isLarge) {
-    try {
-      const { writeFileSync } = require("fs");
-      writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
-    } catch (err: any) {
-      res.status(500).json({ error: `Failed to save file: ${err.message}` });
-      return;
-    }
     res.json({
-      fileUrl: `/uploads/${fileKey}`,
+      fileUrl: publicUrl,
       fileKey,
       fileMimeType: req.file.mimetype,
       fileSize: req.file.size,
       originalName: req.file.originalname,
     });
-  } else {
-    // Small images: base64 data URI for instant preview
-    const base64 = req.file.buffer.toString("base64");
-    const dataUri = `data:${req.file.mimetype};base64,${base64}`;
-
-    // Also save to disk as backup
-    try {
-      const { writeFileSync } = require("fs");
-      writeFileSync(path.join(uploadsDir, fileKey), req.file.buffer);
-    } catch { /* ignore */ }
-
-    res.json({
-      fileUrl: dataUri,
-      fileKey,
-      fileMimeType: req.file.mimetype,
-      fileSize: req.file.size,
-      originalName: req.file.originalname,
-    });
+  } catch (err: any) {
+    console.error("R2 upload failed:", err);
+    res.status(500).json({ error: `Upload failed: ${err.message}` });
   }
 });
 

@@ -784,28 +784,22 @@ export default function Home() {
       (async () => {
         setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading" } : r));
         try {
-          // For videos: skip file upload (too large for base64 storage)
-          // User can paste a hosted URL later; Manus reads from fileUrl
-          const isVideo = row.file.type.startsWith("video/");
-          let uploadData: { fileUrl?: string } = {};
-
-          if (!isVideo) {
-            const formData = new FormData();
-            formData.append("file", row.file);
-            const token = localStorage.getItem("app-token");
-            const uploadRes = await fetch("/api/upload", {
-              method: "POST",
-              body: formData,
-              headers: token ? { "x-app-token": token } : {},
-            });
-            uploadData = await uploadRes.json();
-            if (!uploadRes.ok) throw new Error((uploadData as any).error || "Upload failed");
-          }
+          // Upload file to R2 (images and videos)
+          const formData = new FormData();
+          formData.append("file", row.file);
+          const token = localStorage.getItem("app-token");
+          const uploadRes = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+            headers: token ? { "x-app-token": token } : {},
+          });
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
 
           // Create queue entry
           await createMut.mutateAsync({
             ...row.fields,
-            fileUrl: uploadData.fileUrl || null,
+            fileUrl: uploadData.fileUrl,
             conceptKey: [
               row.fields.brand, row.fields.initiative, row.fields.variation,
               row.fields.angle, row.fields.source, row.fields.product,
