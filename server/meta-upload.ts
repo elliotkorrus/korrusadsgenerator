@@ -394,27 +394,7 @@ async function uploadConceptGroup(
 
   // Use fields from the first row (shared across concept)
   const primary = rows[0];
-  const isMultiDimension = new Set(rows.map((r) => r.dimensions)).size > 1;
-
-  // Build a clean Meta ad name:
-  // For multi-placement ads, strip dimensions and filename (like Manus does)
-  // Format: handle__initiative__variation__theme__style__producer__format__copy__product__date
-  const metaAdName = isMultiDimension
-    ? [
-        primary.handle || "korruscircadian",
-        primary.initiative,
-        primary.variation,
-        primary.angle,
-        primary.creativeType,
-        primary.source,
-        primary.contentType,
-        primary.copySlug,
-        primary.product,
-        primary.date,
-      ]
-        .filter(Boolean)
-        .join("__")
-    : primary.generatedAdName;
+  const metaAdName = primary.generatedAdName;
 
   // Resolve copy if needed
   let headline = primary.headline || "";
