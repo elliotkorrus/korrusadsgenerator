@@ -142,7 +142,9 @@ async function uploadImageToMeta(
   return hash;
 }
 
-// ── Step 1b: Upload Video ────────────────────────────────────────────
+// ── Step 1b: Upload Video (chunked for large files) ─────────────────
+
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks
 
 async function uploadVideoToMeta(
   adAccountId: string,
@@ -150,8 +152,15 @@ async function uploadVideoToMeta(
   videoBuffer: Buffer,
   filename: string
 ): Promise<string> {
-  const url = `${META_BASE}/act_${adAccountId}/advideos`;
+  const fileSize = videoBuffer.length;
 
+  // Use chunked upload for files > 10MB
+  if (fileSize > 10 * 1024 * 1024) {
+    return uploadVideoChunked(adAccountId, accessToken, videoBuffer, filename);
+  }
+
+  // Small files: direct upload
+  const url = `${META_BASE}/act_${adAccountId}/advideos`;
   const formData = new FormData();
   formData.append("access_token", accessToken);
   formData.append("source", new Blob([videoBuffer]), filename);
@@ -163,30 +172,98 @@ async function uploadVideoToMeta(
   if (data.error) {
     throw new Error(`Meta video upload failed: ${JSON.stringify(data.error)}`);
   }
-
   if (!data.id) throw new Error(`No video ID in response: ${JSON.stringify(data)}`);
 
-  // Wait for video to be ready (Meta processes videos async)
-  const videoId = data.id;
+  await waitForVideoReady(data.id, accessToken);
+  return data.id;
+}
+
+/** Chunked upload: start → transfer chunks → finish */
+async function uploadVideoChunked(
+  adAccountId: string,
+  accessToken: string,
+  videoBuffer: Buffer,
+  filename: string
+): Promise<string> {
+  const fileSize = videoBuffer.length;
+  const url = `${META_BASE}/act_${adAccountId}/advideos`;
+
+  // Step 1: Start upload session
+  const startForm = new FormData();
+  startForm.append("access_token", accessToken);
+  startForm.append("upload_phase", "start");
+  startForm.append("file_size", String(fileSize));
+
+  const startRes = await fetch(url, { method: "POST", body: startForm });
+  const startData = await startRes.json();
+  if (startData.error) {
+    throw new Error(`Meta video upload start failed: ${JSON.stringify(startData.error)}`);
+  }
+
+  const uploadSessionId = startData.upload_session_id;
+  const videoId = startData.video_id;
+  if (!uploadSessionId || !videoId) {
+    throw new Error(`Missing session/video ID: ${JSON.stringify(startData)}`);
+  }
+
+  // Step 2: Transfer chunks
+  let startOffset = Number(startData.start_offset) || 0;
+  let endOffset = Number(startData.end_offset) || Math.min(CHUNK_SIZE, fileSize);
+
+  while (startOffset < fileSize) {
+    const chunk = videoBuffer.subarray(startOffset, endOffset);
+
+    const chunkForm = new FormData();
+    chunkForm.append("access_token", accessToken);
+    chunkForm.append("upload_phase", "transfer");
+    chunkForm.append("upload_session_id", uploadSessionId);
+    chunkForm.append("start_offset", String(startOffset));
+    chunkForm.append("video_file_chunk", new Blob([chunk]), filename);
+
+    const chunkRes = await fetch(url, { method: "POST", body: chunkForm });
+    const chunkData = await chunkRes.json();
+    if (chunkData.error) {
+      throw new Error(`Meta video chunk upload failed at offset ${startOffset}: ${JSON.stringify(chunkData.error)}`);
+    }
+
+    startOffset = Number(chunkData.start_offset);
+    endOffset = Number(chunkData.end_offset) || fileSize;
+  }
+
+  // Step 3: Finish upload
+  const finishForm = new FormData();
+  finishForm.append("access_token", accessToken);
+  finishForm.append("upload_phase", "finish");
+  finishForm.append("upload_session_id", uploadSessionId);
+  finishForm.append("title", filename);
+
+  const finishRes = await fetch(url, { method: "POST", body: finishForm });
+  const finishData = await finishRes.json();
+  if (finishData.error) {
+    throw new Error(`Meta video upload finish failed: ${JSON.stringify(finishData.error)}`);
+  }
+
+  await waitForVideoReady(videoId, accessToken);
+  return videoId;
+}
+
+/** Poll Meta until video processing is complete */
+async function waitForVideoReady(videoId: string, accessToken: string): Promise<void> {
   let attempts = 0;
-  const maxAttempts = 30; // 5 minutes max
+  const maxAttempts = 60; // 10 minutes max
   while (attempts < maxAttempts) {
     await new Promise((r) => setTimeout(r, 10000)); // 10s intervals
     const statusRes = await fetch(
       `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
     );
     const statusData = await statusRes.json();
-    if (statusData.status?.video_status === "ready") break;
+    if (statusData.status?.video_status === "ready") return;
     if (statusData.status?.video_status === "error") {
       throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
     }
     attempts++;
   }
-  if (attempts >= maxAttempts) {
-    throw new Error("Video processing timed out after 5 minutes");
-  }
-
-  return videoId;
+  throw new Error("Video processing timed out after 10 minutes");
 }
 
 // ── Step 2: Create Ad Creative ───────────────────────────────────────

@@ -108,21 +108,25 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
 });
 
 // ─── Send to Meta (batch — groups by concept automatically) ──────────
+// Returns immediately, uploads run in background. Frontend polls status.
 app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
   const { adIds } = req.body as { adIds?: number[] };
 
-  try {
-    let result;
-    if (adIds && adIds.length > 0) {
-      result = await uploadAdsBatch(adIds);
-    } else {
-      // No specific IDs = upload ALL ready ads
-      result = await uploadAllReady();
+  // Respond immediately — uploads happen in background
+  res.json({ success: true, message: "Upload started. Ads will update as they complete.", meta: { total: 0, success: 0, failed: 0 } });
+
+  // Run uploads in background (no await)
+  (async () => {
+    try {
+      if (adIds && adIds.length > 0) {
+        await uploadAdsBatch(adIds);
+      } else {
+        await uploadAllReady();
+      }
+    } catch (err: any) {
+      console.error("Background Meta upload error:", err.message);
     }
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  })();
 });
 
 // Legacy MANUS callback (still works for external integrations)
