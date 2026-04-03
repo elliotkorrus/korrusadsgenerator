@@ -99,6 +99,11 @@ function isVideo(mimeType: string, filename?: string): boolean {
   return false;
 }
 
+/** Strip the "act_" prefix if present — DB may store it either way */
+function normalizeAdAccountId(id: string): string {
+  return id.replace(/^act_/, "");
+}
+
 /** Classify dimension string into feed or story placement */
 function placementType(dims: string): "story" | "feed" {
   if (dims === "9:16") return "story";
@@ -533,7 +538,7 @@ export async function uploadAdsBatch(adIds: number[]): Promise<{
 
   const meta: MetaSettings = {
     accessToken: metaSettings.accessToken,
-    adAccountId: metaSettings.adAccountId,
+    adAccountId: normalizeAdAccountId(metaSettings.adAccountId),
     pageId: metaSettings.pageId || "",
     instagramUserId: metaSettings.instagramUserId || "",
     defaultDestinationUrl: metaSettings.defaultDestinationUrl,
