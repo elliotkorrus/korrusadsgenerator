@@ -742,9 +742,18 @@ const metaSettingsRouter = t.router({
     const settings = settingsRows[0];
     if (!settings?.accessToken || !settings?.adAccountId) return [];
     try {
-      const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?fields=id,name,status,campaign{id,name}&filtering=[{"field":"status","operator":"IN","value":["ACTIVE","PAUSED"]}]&access_token=${settings.accessToken}&limit=200`;
+      const params = new URLSearchParams({
+        fields: "id,name,status,campaign{id,name}",
+        access_token: settings.accessToken,
+        limit: "200",
+      });
+      const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?${params.toString()}`;
       const res = await fetch(url);
-      if (!res.ok) return [];
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.error("Meta getAdSets failed:", res.status, errText);
+        return [];
+      }
       const data = await res.json();
       const result = (data.data || []).map((s: any) => ({
         id: s.id,
