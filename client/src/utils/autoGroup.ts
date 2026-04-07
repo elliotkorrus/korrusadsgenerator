@@ -28,19 +28,6 @@ export function groupFilesByBaseName(files: File[]): Map<string, File[]> {
     groups.get(baseName)!.push(file);
   }
 
-  // Fuzzy merge: if two group keys differ by <= 2 edit distance, merge
-  const keys = [...groups.keys()];
-  for (let i = 0; i < keys.length; i++) {
-    for (let j = i + 1; j < keys.length; j++) {
-      if (levenshtein(keys[i], keys[j]) <= 2) {
-        groups.get(keys[i])!.push(...groups.get(keys[j])!);
-        groups.delete(keys[j]);
-        keys.splice(j, 1);
-        j--;
-      }
-    }
-  }
-
   return groups;
 }
 
