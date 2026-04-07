@@ -252,11 +252,64 @@ const uploadQueueRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
+      // When marking "ready", validate essential fields first
+      const warnings: string[] = [];
+      if (input.status === "ready") {
+        const ads = await db.select().from(schema.uploadQueue)
+          .where(inArray(schema.uploadQueue.id, input.ids));
+        const metaRows = await db.select().from(schema.metaSettings);
+        const metaSettings = metaRows[0];
+        const allCopy = await db.select().from(schema.copyLibrary);
+        const copyBySlug = new Map(allCopy.map((c) => [c.copySlug, c]));
+
+        for (const ad of ads) {
+          const issues: string[] = [];
+          if (!ad.fileUrl) issues.push("no creative file");
+          if (!ad.adSetId) issues.push("no ad set");
+          // Check headline via copy slug
+          let hasHeadline = !!ad.headline;
+          let hasBody = !!ad.bodyCopy;
+          if (ad.copySlug) {
+            const copy = copyBySlug.get(ad.copySlug);
+            if (!copy) {
+              issues.push(`copy slug "${ad.copySlug}" not found`);
+            } else {
+              if (!hasHeadline && copy.headline) hasHeadline = true;
+              if (!hasBody && copy.bodyCopy) hasBody = true;
+            }
+          }
+          if (!hasHeadline) issues.push("no headline");
+          if (!hasBody) issues.push("no body copy");
+          if (!ad.destinationUrl && !metaSettings?.defaultDestinationUrl) issues.push("no destination URL");
+          if (issues.length > 0) warnings.push(`${ad.generatedAdName || `Ad #${ad.id}`}: ${issues.join(", ")}`);
+        }
+      }
+
       for (const id of input.ids) {
         await db.update(schema.uploadQueue)
           .set({ status: input.status, updatedAt: sql`now()` })
           .where(eq(schema.uploadQueue.id, id));
       }
+      return { success: true, warnings };
+    }),
+
+  // Reset stuck "uploading" rows back to "ready" (recovery from server crashes)
+  resetStuck: publicProcedure
+    .mutation(async () => {
+      const result = await db.update(schema.uploadQueue)
+        .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+        .where(eq(schema.uploadQueue.status, "uploading"))
+        .returning({ id: schema.uploadQueue.id });
+      return { reset: result.length };
+    }),
+
+  // Retry failed uploads — reset error → ready
+  retryFailed: publicProcedure
+    .input(z.object({ ids: z.array(z.number()) }))
+    .mutation(async ({ input }) => {
+      await db.update(schema.uploadQueue)
+        .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+        .where(inArray(schema.uploadQueue.id, input.ids));
       return { success: true };
     }),
 

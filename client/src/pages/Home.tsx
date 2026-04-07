@@ -718,7 +718,16 @@ export default function Home() {
     onError: (err) => { toast.error("Bulk delete failed", err.message); },
   });
   const bulkStatusMut = trpc.queue.bulkUpdateStatus.useMutation({
-    onSuccess: () => { utils.queue.list.invalidate(); setSelectedKeys(new Set()); },
+    onSuccess: (data) => {
+      utils.queue.list.invalidate();
+      setSelectedKeys(new Set());
+      if (data.warnings && data.warnings.length > 0) {
+        toast.warning(
+          `${data.warnings.length} ad${data.warnings.length > 1 ? "s" : ""} may have issues`,
+          data.warnings.slice(0, 3).join("\n") + (data.warnings.length > 3 ? `\n…and ${data.warnings.length - 3} more` : "")
+        );
+      }
+    },
     onError: (err) => { toast.error("Status update failed", err.message); },
   });
   const mergeMut = trpc.queue.merge.useMutation({
@@ -732,6 +741,14 @@ export default function Home() {
   const createMut = trpc.queue.create.useMutation({
     onSuccess: () => { utils.queue.list.invalidate(); },
     onError: (err) => { toast.error("Create failed", err.message); },
+  });
+  const retryFailedMut = trpc.queue.retryFailed.useMutation({
+    onSuccess: (data) => { utils.queue.list.invalidate(); toast.success("Ads reset to Ready", "You can now retry the upload."); },
+    onError: (err) => { toast.error("Retry failed", err.message); },
+  });
+  const resetStuckMut = trpc.queue.resetStuck.useMutation({
+    onSuccess: (data) => { utils.queue.list.invalidate(); toast.success(`Reset ${data.reset} stuck ads`, "They're back in the Ready queue."); },
+    onError: (err) => { toast.error("Reset failed", err.message); },
   });
 
   // Zero-friction file drop → instant ingest
@@ -1129,6 +1146,9 @@ export default function Home() {
         for (const row of group.rows) {
           await updateMut.mutateAsync({ id: row.id, headline: (entry as any).headline || "", bodyCopy: (entry as any).bodyCopy || "" });
         }
+        toast.success("Copy applied", `Headline & body set from ${value}`);
+      } else {
+        toast.warning("Copy slug not found", `"${value}" doesn't exist in the copy library. Headline & body won't be auto-filled.`);
       }
     }
   };
@@ -1501,12 +1521,23 @@ export default function Home() {
             </select>
           );
         })()}
+        {/* Reset stuck uploads — visible on Queue view when there are uploading items */}
+        {focusView === "queue" && allItems.some((i) => i.status === "uploading") && !batchSending && (
+          <button
+            onClick={() => resetStuckMut.mutate()}
+            disabled={resetStuckMut.isPending}
+            className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] rounded-md transition-colors"
+            style={{ background: "rgba(234,179,8,0.1)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)" }}
+          >
+            {resetStuckMut.isPending ? "Resetting…" : "↻ Reset Stuck"}
+          </button>
+        )}
         {/* Send All Ready to Meta — visible on Queue view */}
         {focusView === "queue" && (
           <button
             onClick={() => openUploadPreview()}
             disabled={batchSending || (viewCounts.queue || 0) === 0}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors"
+            className={`${allItems.some((i) => i.status === "uploading") && !batchSending ? "" : "ml-auto "}flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors`}
             style={{
               background: batchSending ? "#007a9e" : "#0099C6",
               color: "white",
@@ -1551,6 +1582,16 @@ export default function Home() {
           >
             {batchSending ? "Uploading…" : "Send to Meta"}
           </button>
+          {selectedIds.some(id => allItems.find(i => i.id === id)?.status === "error") && (
+            <button
+              onClick={() => retryFailedMut.mutate({ ids: selectedIds.filter(id => allItems.find(i => i.id === id)?.status === "error") })}
+              disabled={retryFailedMut.isPending}
+              className="px-2.5 py-1 text-xs rounded-md transition-colors"
+              style={{ background: "rgba(234,179,8,0.1)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)" }}
+            >
+              ↻ Retry Failed
+            </button>
+          )}
           <button
             onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}
             className="px-2.5 py-1 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20"
@@ -2346,12 +2387,24 @@ export default function Home() {
                                   </span>
                                 </div>
                               ))}
-                              {rows.filter((r) => r.status === "error" && r.errorMessage).map((r) => (
-                                <div key={r.id} className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
-                                  <X className="w-3.5 h-3.5 text-red-600" />
-                                  <span className="text-[11px] text-red-300">{r.dimensions} — {r.errorMessage}</span>
+                              {rows.filter((r) => r.status === "error").length > 0 && (
+                                <div className="space-y-1.5">
+                                  {rows.filter((r) => r.status === "error").map((r) => (
+                                    <div key={r.id} className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                                      <X className="w-3.5 h-3.5 text-red-600" />
+                                      <span className="text-[11px] text-red-300 flex-1">{r.dimensions} — {r.errorMessage || "Unknown error"}</span>
+                                    </div>
+                                  ))}
+                                  <button
+                                    onClick={() => retryFailedMut.mutate({ ids: rows.filter((r) => r.status === "error").map((r) => r.id) })}
+                                    disabled={retryFailedMut.isPending}
+                                    className="text-[11px] px-3 py-1.5 rounded-md transition-colors"
+                                    style={{ background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.3)" }}
+                                  >
+                                    {retryFailedMut.isPending ? "Resetting…" : "↻ Retry — Move Back to Ready"}
+                                  </button>
                                 </div>
-                              ))}
+                              )}
                             </div>
                           </td>
                         </tr>

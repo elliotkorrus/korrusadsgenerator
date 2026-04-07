@@ -120,8 +120,15 @@ async function fetchFileBuffer(fileUrl: string): Promise<{ buffer: Buffer; mimeT
     };
   }
 
-  // Handle HTTP URLs (R2, etc.)
-  const res = await fetch(fileUrl);
+  // Handle HTTP URLs (R2, etc.) — 60s timeout to avoid hanging
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  let res: Response;
+  try {
+    res = await fetch(fileUrl, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) throw new Error(`Failed to fetch file from ${fileUrl}: HTTP ${res.status}`);
   const contentType = res.headers.get("content-type") || "application/octet-stream";
   const buffer = Buffer.from(await res.arrayBuffer());
@@ -481,7 +488,10 @@ async function createAdCreative(
       asset_feed_spec: JSON.stringify(assetFeedSpec),
     };
   } else {
-    // Single asset: use standard object_story_spec
+    // Single placement: use standard object_story_spec
+    if (opts.assets.length > 1) {
+      console.warn(`[createAdCreative] ${opts.assets.length} assets for single placement type — only first will be used. Concept: ${opts.name}`);
+    }
     const asset = opts.assets[0];
     if (!asset) throw new Error("No asset available");
 
@@ -628,12 +638,14 @@ async function uploadConceptGroup(
   }
 
   if (missing.length > 0) {
-    return {
-      conceptKey,
-      adIds,
-      success: false,
-      error: `Missing required fields: ${missing.join(", ")}`,
-    };
+    const errorMsg = `Missing required fields: ${missing.join(", ")}`;
+    // Mark ads as error so user can see what went wrong
+    await db.update(schema.uploadQueue)
+      .set({ status: "error", errorMessage: errorMsg, updatedAt: sql`now()` })
+      .where(inArray(schema.uploadQueue.id, adIds));
+    emitProgress(conceptKey, { adName: metaAdName, stage: "error", message: errorMsg });
+    setTimeout(() => clearProgress(conceptKey), 30000);
+    return { conceptKey, adIds, success: false, error: errorMsg };
   }
 
   try {

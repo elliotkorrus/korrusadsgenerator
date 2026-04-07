@@ -15,7 +15,13 @@ export function computeBaseName(filename: string): string {
   base = base.replace(/[-_.\s]+/g, "_").toLowerCase().trim();
   base = base.replace(/^_+|_+$/g, "");
 
-  return base;
+  // If stripping dimensions left an empty string, use the original filename (minus extension)
+  if (!base) {
+    base = filename.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, "")
+      .replace(/[-_.\s]+/g, "_").toLowerCase().trim();
+  }
+
+  return base || filename;
 }
 
 /** Group files by their base name (same concept, different sizes) */
