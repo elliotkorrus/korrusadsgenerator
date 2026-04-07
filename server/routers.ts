@@ -765,8 +765,9 @@ const metaSettingsRouter = t.router({
       adSetsCache.data = result;
       adSetsCache.fetchedAt = now;
       return result;
-    } catch {
-      return [];
+    } catch (err: any) {
+      console.error("Meta getAdSets error:", err?.message || err);
+      throw new Error(`Failed to load ad sets from Meta: ${err?.message || "Unknown error"}`);
     }
   }),
 });

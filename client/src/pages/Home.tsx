@@ -12,6 +12,8 @@ import SpreadsheetInbox, { PendingRow } from "../components/spreadsheet/Spreadsh
 import StickyDefaultsBar from "../components/StickyDefaultsBar";
 import ValidationErrorModal from "../components/ValidationErrorModal";
 import AdSetPicker from "../components/AdSetPicker";
+import PreUploadPreview from "../components/PreUploadPreview";
+import { useToast } from "../components/Toast";
 import { useUploadProgress, stageName } from "../hooks/useUploadProgress";
 import { useStickyDefaults } from "../hooks/useStickyDefaults";
 import { groupFilesByBaseName } from "../utils/autoGroup";
@@ -573,6 +575,7 @@ function ConceptCard({
 // ── Main Home component ───────────────────────────────────────────
 export default function Home() {
   const utils = trpc.useUtils();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [focusView, _setFocusView] = useState<string>(
     () => searchParams.get("view") || "inbox"
@@ -703,43 +706,32 @@ export default function Home() {
   const { data: copyEntries = [] } = trpc.copy.list.useQuery({});
 
   const updateMut = trpc.queue.update.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); },
+    onError: (err) => { toast.error("Update failed", err.message); },
   });
   const deleteMut = trpc.queue.delete.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); },
+    onError: (err) => { toast.error("Delete failed", err.message); },
   });
   const bulkDeleteMut = trpc.queue.bulkDelete.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-      setSelectedKeys(new Set());
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); setSelectedKeys(new Set()); },
+    onError: (err) => { toast.error("Bulk delete failed", err.message); },
   });
   const bulkStatusMut = trpc.queue.bulkUpdateStatus.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-      setSelectedKeys(new Set());
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); setSelectedKeys(new Set()); },
+    onError: (err) => { toast.error("Status update failed", err.message); },
   });
   const mergeMut = trpc.queue.merge.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-      setSelectedKeys(new Set());
-      setShowMergeDialog(false);
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); setSelectedKeys(new Set()); setShowMergeDialog(false); },
+    onError: (err) => { toast.error("Merge failed", err.message); },
   });
   const addSizeMut = trpc.queue.addSize.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); },
+    onError: (err) => { toast.error("Add size failed", err.message); },
   });
   const createMut = trpc.queue.create.useMutation({
-    onSuccess: () => {
-      utils.queue.list.invalidate();
-    },
+    onSuccess: () => { utils.queue.list.invalidate(); },
+    onError: (err) => { toast.error("Create failed", err.message); },
   });
 
   // Zero-friction file drop → instant ingest
@@ -999,13 +991,35 @@ export default function Home() {
     }
   }
 
-  // Batch send to Meta — sends selected or all ready ads
+  // Pre-upload preview state
+  const [previewAds, setPreviewAds] = useState<typeof allItems>([]);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewAdIds, setPreviewAdIds] = useState<number[] | undefined>();
+
+  // Batch send to Meta — opens preview first, then uploads on confirm
   const [batchSending, setBatchSending] = useState(false);
-  async function sendBatchToMeta(ids?: number[]) {
+
+  function openUploadPreview(ids?: number[]) {
+    const readyAds = ids
+      ? allItems.filter((i) => ids.includes(i.id) && i.status === "ready")
+      : allItems.filter((i) => i.status === "ready");
+
+    if (readyAds.length === 0) {
+      toast.warning("No ads ready", "Mark ads as Ready before uploading to Meta.");
+      return;
+    }
+
+    setPreviewAds(readyAds);
+    setPreviewAdIds(ids);
+    setShowPreview(true);
+  }
+
+  async function confirmAndUpload() {
     setBatchSending(true);
+    setShowPreview(false);
     try {
       // Pre-upload validation
-      const validation = await validateMut.mutateAsync({ adIds: ids || [] });
+      const validation = await validateMut.mutateAsync({ adIds: previewAdIds || [] });
       if (!validation.valid) {
         setValidationErrors(validation.errors);
         setShowValidationModal(true);
@@ -1020,17 +1034,16 @@ export default function Home() {
           "Content-Type": "application/json",
           ...(metaToken ? { "x-app-token": metaToken } : {}),
         },
-        body: JSON.stringify({ adIds: ids || [] }),
+        body: JSON.stringify({ adIds: previewAdIds || [] }),
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(`Batch send failed: ${data.error || res.statusText}`);
+        toast.error("Upload failed", data.error || res.statusText);
       } else {
-        const { meta } = data;
-        if (meta) {
-          alert(`Upload complete: ${meta.success} succeeded, ${meta.failed} failed out of ${meta.total} concept groups.`);
-        }
+        toast.success("Upload started", "Ads are being uploaded to Meta in the background.");
       }
+    } catch (err: any) {
+      toast.error("Upload failed", err.message || "Unknown error");
     } finally {
       setBatchSending(false);
       utils.queue.list.invalidate();
@@ -1491,7 +1504,7 @@ export default function Home() {
         {/* Send All Ready to Meta — visible on Queue view */}
         {focusView === "queue" && (
           <button
-            onClick={() => sendBatchToMeta()}
+            onClick={() => openUploadPreview()}
             disabled={batchSending || (viewCounts.queue || 0) === 0}
             className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors"
             style={{
@@ -1525,7 +1538,7 @@ export default function Home() {
             ✓ Mark Ready
           </button>
           <button
-            onClick={() => sendBatchToMeta(selectedIds)}
+            onClick={() => openUploadPreview(selectedIds)}
             disabled={batchSending || !selectedIds.some(id => allItems.find(i => i.id === id)?.status === "ready")}
             className="px-2.5 py-1 text-xs rounded-md transition-colors"
             style={{
@@ -2405,6 +2418,16 @@ export default function Home() {
       )}
 
       {/* Merge Dialog */}
+      {showPreview && previewAds.length > 0 && (
+        <PreUploadPreview
+          ads={previewAds as any}
+          metaDefaults={metaDefaults as any}
+          onConfirm={confirmAndUpload}
+          onCancel={() => setShowPreview(false)}
+          loading={batchSending}
+        />
+      )}
+
       {showValidationModal && validationErrors.length > 0 && (
         <ValidationErrorModal
           errors={validationErrors}

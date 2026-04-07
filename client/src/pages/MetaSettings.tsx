@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { trpc } from "../lib/trpc";
+import { useToast } from "../components/Toast";
 
 const CTA_OPTIONS = [
   { value: "SHOP_NOW", label: "Shop Now" },
@@ -22,8 +23,12 @@ const inputStyle: React.CSSProperties = {
 };
 
 export default function MetaSettings() {
+  const toast = useToast();
   const { data: settings } = trpc.meta.get.useQuery();
-  const updateMut = trpc.meta.update.useMutation();
+  const updateMut = trpc.meta.update.useMutation({
+    onSuccess: () => { toast.success("Settings saved"); },
+    onError: (err) => { toast.error("Failed to save settings", err.message); },
+  });
 
   const [form, setForm] = useState({
     appId: "",

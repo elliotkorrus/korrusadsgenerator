@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DashboardLayout from "./components/DashboardLayout";
+import { ToastProvider } from "./components/Toast";
 import Home from "./pages/Home";
 import UploadHistory from "./pages/UploadHistory";
 import MetaSettings from "./pages/MetaSettings";
@@ -16,21 +17,23 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
-      <DashboardLayout onSignOut={() => { localStorage.removeItem("app-token"); setAuthed(false); }}>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/history" element={<UploadHistory />} />
-          <Route path="/naming-config" element={<NamingConfig />} />
-          <Route path="/handles" element={<HandleBank />} />
-          <Route path="/settings" element={<MetaSettings />} />
-          {/* Legacy redirects */}
-          <Route path="/copy-library" element={<Navigate to="/naming-config" replace />} />
-          <Route path="/angle-bank" element={<Navigate to="/naming-config" replace />} />
-          <Route path="/field-options" element={<Navigate to="/naming-config" replace />} />
-          <Route path="/naming-guide" element={<Navigate to="/naming-config" replace />} />
-        </Routes>
-      </DashboardLayout>
-    </BrowserRouter>
+    <ToastProvider>
+      <BrowserRouter>
+        <DashboardLayout onSignOut={() => { localStorage.removeItem("app-token"); setAuthed(false); }}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/history" element={<UploadHistory />} />
+            <Route path="/naming-config" element={<NamingConfig />} />
+            <Route path="/handles" element={<HandleBank />} />
+            <Route path="/settings" element={<MetaSettings />} />
+            {/* Legacy redirects */}
+            <Route path="/copy-library" element={<Navigate to="/naming-config" replace />} />
+            <Route path="/angle-bank" element={<Navigate to="/naming-config" replace />} />
+            <Route path="/field-options" element={<Navigate to="/naming-config" replace />} />
+            <Route path="/naming-guide" element={<Navigate to="/naming-config" replace />} />
+          </Routes>
+        </DashboardLayout>
+      </BrowserRouter>
+    </ToastProvider>
   );
 }
