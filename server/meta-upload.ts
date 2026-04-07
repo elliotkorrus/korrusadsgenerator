@@ -239,7 +239,7 @@ async function uploadImageToMeta(
 
   const formData = new FormData();
   formData.append("access_token", accessToken);
-  formData.append("filename", new Blob([imageBuffer]), filename);
+  formData.append("filename", new Blob([new Uint8Array(imageBuffer)]), filename);
 
   return retryWithBackoff(async () => {
     const res = await metaFetch(url, { method: "POST", body: formData });
@@ -280,7 +280,7 @@ async function uploadVideoToMeta(
   const url = `${META_BASE}/act_${adAccountId}/advideos`;
   const formData = new FormData();
   formData.append("access_token", accessToken);
-  formData.append("source", new Blob([videoBuffer]), filename);
+  formData.append("source", new Blob([new Uint8Array(videoBuffer)]), filename);
   formData.append("title", filename);
 
   const res = await fetch(url, { method: "POST", body: formData });
@@ -336,7 +336,7 @@ async function uploadVideoChunked(
     chunkForm.append("upload_phase", "transfer");
     chunkForm.append("upload_session_id", uploadSessionId);
     chunkForm.append("start_offset", String(startOffset));
-    chunkForm.append("video_file_chunk", new Blob([chunk]), filename);
+    chunkForm.append("video_file_chunk", new Blob([new Uint8Array(chunk)]), filename);
 
     const chunkData = await retryWithBackoff(async () => {
       const chunkRes = await metaFetch(url, { method: "POST", body: chunkForm });

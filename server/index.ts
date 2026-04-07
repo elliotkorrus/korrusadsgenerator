@@ -100,7 +100,8 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
       const err = result.results[0]?.error || "Unknown error";
       res.status(400).json({ success: false, error: err });
     } else {
-      res.json({ success: true, ...result.results[0] });
+      const { success: _, ...rest } = result.results[0] || {};
+      res.json({ success: true, ...rest });
     }
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
