@@ -503,6 +503,20 @@ async function createAdCreative(
     if (!asset) throw new Error("No asset available");
 
     if (asset.type === "video") {
+      // Fetch the video thumbnail URL from Meta to satisfy the image_url requirement
+      let imageUrl: string | undefined;
+      try {
+        const thumbRes = await fetch(
+          `${META_BASE}/${asset.id}?fields=thumbnails&access_token=${accessToken}`
+        );
+        const thumbData = await thumbRes.json();
+        if (thumbData.thumbnails?.data?.[0]?.uri) {
+          imageUrl = thumbData.thumbnails.data[0].uri;
+        }
+      } catch {
+        // Thumbnail fetch is best-effort
+      }
+
       body = {
         name: opts.name,
         access_token: accessToken,
@@ -511,6 +525,7 @@ async function createAdCreative(
           instagram_user_id: opts.instagramUserId,
           video_data: {
             video_id: asset.id,
+            ...(imageUrl ? { image_url: imageUrl } : {}),
             link_description: opts.bodyCopy,
             title: opts.headline,
             message: opts.bodyCopy,
