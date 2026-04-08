@@ -66,11 +66,11 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
       <aside className="w-48 flex-shrink-0 flex flex-col" style={{ background: "var(--surface-1)", boxShadow: "inset -1px 0 0 var(--surface-3), 2px 0 8px rgba(0,0,0,0.03)" }}>
 
         {/* Logo */}
-        <div className="px-4 py-4" style={{ borderBottom: "1px solid var(--surface-3)", background: "linear-gradient(180deg, rgba(0,153,198,0.04) 0%, transparent 100%)" }}>
+        <div className="px-4 py-4" style={{ borderBottom: "1px solid var(--surface-3)" }}>
           <div className="flex items-center gap-2.5">
             <div
               className="w-7 h-7 flex items-center justify-center flex-shrink-0 rounded-sm"
-              style={{ background: "linear-gradient(135deg, #0099C6 0%, #255C9E 100%)", boxShadow: "0 1px 3px rgba(0,153,198,0.3)" }}
+              style={{ background: "#0099C6" }}
             >
               <span className="text-[11px] font-bold text-white" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>K</span>
             </div>
@@ -107,7 +107,7 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
                   }`}
                   style={
                     isActive
-                      ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)", boxShadow: `0 0 8px ${view.accent}1a` }
+                      ? { borderColor: view.accent, background: `${view.accent}0d`, color: "var(--text-primary)" }
                       : { color: "var(--text-secondary)" }
                   }
                 >
@@ -132,7 +132,7 @@ export default function DashboardLayout({ children, onSignOut }: { children: Rea
         {/* Footer */}
         <div className="px-3 py-3 space-y-2" style={{ borderTop: "1px solid var(--surface-3)" }}>
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#3fb950", boxShadow: "0 0 6px #3fb950cc, 0 0 12px #3fb95044" }} />
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#3fb950" }} />
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Live · v1.0</span>
           </div>
           {onSignOut && (

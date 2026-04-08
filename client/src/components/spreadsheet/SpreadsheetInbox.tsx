@@ -47,19 +47,18 @@ interface ConceptGroup {
 // ─── Column definitions ──────────────────────────────────────────
 const COLUMNS: { key: string; label: string; width: string; type: "text" | "select" | "readonly" }[] = [
   { key: "handle", label: "Handle", width: "80px", type: "select" },
-  { key: "initiative", label: "Init.", width: "80px", type: "text" },
-  { key: "variation", label: "Var.", width: "50px", type: "text" },
+  { key: "initiative", label: "Initiative", width: "80px", type: "text" },
+  { key: "variation", label: "Variation", width: "55px", type: "text" },
   { key: "angle", label: "Theme", width: "100px", type: "select" },
   { key: "creativeType", label: "Style", width: "80px", type: "select" },
-  { key: "source", label: "Producer", width: "90px", type: "select" },
-  { key: "contentType", label: "Format", width: "70px", type: "select" },
-  { key: "product", label: "Product", width: "75px", type: "select" },
-  { key: "copySlug", label: "Copy", width: "90px", type: "select" },
-  { key: "filename", label: "Filename", width: "100px", type: "text" },
-  { key: "date", label: "Date", width: "75px", type: "text" },
+  { key: "source", label: "Producer", width: "85px", type: "select" },
+  { key: "contentType", label: "Format", width: "65px", type: "select" },
+  { key: "product", label: "Product", width: "70px", type: "select" },
+  { key: "copySlug", label: "Copy", width: "85px", type: "select" },
+  { key: "date", label: "Date", width: "70px", type: "text" },
   { key: "adSetId", label: "Ad Set", width: "130px", type: "select" },
-  { key: "destinationUrl", label: "Dest URL", width: "110px", type: "select" },
-  { key: "cta", label: "CTA", width: "80px", type: "select" },
+  { key: "destinationUrl", label: "Dest URL", width: "100px", type: "select" },
+  { key: "cta", label: "CTA", width: "75px", type: "select" },
 ];
 
 interface Props {

@@ -1554,16 +1554,10 @@ export default function Home() {
 
           <button
             onClick={() => setShowAddDialog(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 transition-all text-[11px] font-semibold rounded-md"
-            style={{ background: "linear-gradient(135deg, #0099C6, #255C9E)", color: "white", border: "none", boxShadow: "0 1px 3px rgba(0,153,198,0.25)" }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 2px 8px rgba(0,153,198,0.35)";
-              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-0.5px)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,153,198,0.25)";
-              (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 transition-colors text-[11px] font-semibold rounded"
+            style={{ background: "#0099C6", color: "white", border: "none" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}
           >
             <Plus className="w-3.5 h-3.5" /> Add Ad
           </button>
@@ -1586,66 +1580,59 @@ export default function Home() {
       {/* Dashboard Metrics */}
       <DashboardMetrics items={allItems as any} />
 
-      {/* Focus view tabs */}
+      {/* Tabs + Search — single row */}
       <div
-        className="flex-shrink-0 flex items-center gap-1.5 px-5 py-2.5 overflow-x-auto"
+        className="flex-shrink-0 flex items-center gap-2 px-5 py-1.5 overflow-x-auto"
         style={{ borderBottom: "1px solid var(--surface-2)", background: "var(--surface-1)" }}
       >
         {FOCUS_VIEWS.map((view) => {
           const isActive = focusView === view.key;
           const count = viewCounts[view.key] || 0;
-          const accentMap: Record<string, { bg: string; border: string; text: string; countBg: string; countText: string }> = {
-            inbox: { bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.3)", text: "#f59e0b", countBg: "rgba(245,158,11,0.15)", countText: "#fbbf24" },
-            queue: { bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.3)", text: "#3b82f6", countBg: "rgba(59,130,246,0.15)", countText: "#60a5fa" },
-            live: { bg: "rgba(16,185,129,0.1)", border: "rgba(16,185,129,0.3)", text: "#10b981", countBg: "rgba(16,185,129,0.15)", countText: "#34d399" },
+          const accentMap: Record<string, { text: string; countText: string }> = {
+            inbox: { text: "#f59e0b", countText: "#fbbf24" },
+            queue: { text: "#3b82f6", countText: "#60a5fa" },
+            live: { text: "#10b981", countText: "#34d399" },
           };
           const accent = accentMap[view.key] || accentMap.inbox;
           return (
             <button
               key={view.key}
               onClick={() => setFocusView(view.key)}
-              className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium rounded-md transition-all whitespace-nowrap"
-              style={
-                isActive
-                  ? { background: accent.bg, color: accent.text, border: `1px solid ${accent.border}` }
-                  : { color: "var(--text-muted)", border: "1px solid transparent" }
-              }
+              className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-all whitespace-nowrap"
+              style={{
+                color: isActive ? accent.text : "var(--text-muted)",
+                background: "transparent",
+                border: "none",
+                borderBottom: isActive ? `2px solid ${accent.text}` : "2px solid transparent",
+                borderRadius: 0,
+                paddingBottom: 6,
+                cursor: "pointer",
+              }}
             >
               <span className="font-semibold">{view.label}</span>
               <span
-                className="px-1.5 py-px font-mono rounded-sm"
+                className="font-mono"
                 style={{
                   fontSize: "9px",
-                  background: isActive ? accent.countBg : "var(--surface-3)",
-                  color: isActive ? accent.countText : "var(--text-secondary)",
+                  color: isActive ? accent.countText : "var(--text-muted)",
                 }}
               >
                 {count}
               </span>
-              {isActive && (
-                <span className="text-[10px] font-normal" style={{ color: "var(--text-muted)" }}>
-                  {view.desc}
-                </span>
-              )}
             </button>
           );
         })}
-      </div>
 
-      {/* Feature 4: Search bar */}
-      <div
-        className="flex-shrink-0 px-5 py-2 flex items-center gap-2"
-        style={{ borderBottom: "1px solid var(--surface-2)", background: "var(--surface-0)" }}
-      >
-        <div className="relative flex items-center flex-1 max-w-xs">
-          <Search className="absolute left-2.5 w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
+        {/* Search — inline with tabs */}
+        <div className="relative flex items-center ml-4" style={{ minWidth: 180 }}>
+          <Search className="absolute left-2.5 w-3 h-3" style={{ color: "var(--text-muted)" }} />
           <input
             ref={searchInputRef}
             type="text"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Search by name, angle, initiative…"
-            className="w-full pl-8 pr-7 py-1.5 text-[12px] rounded-md focus:outline-none"
+            placeholder="Search..."
+            className="w-full pl-7 pr-6 py-1 text-[11px] rounded focus:outline-none"
             style={{
               background: "var(--surface-2)",
               border: "1px solid var(--surface-3)",
@@ -1657,19 +1644,20 @@ export default function Home() {
           />
           {searchText && (
             <button
-              className="absolute right-2.5 transition-colors"
+              className="absolute right-2 transition-colors"
               onClick={() => setSearchText("")}
               style={{ color: "var(--text-muted)", background: "transparent", border: "none", cursor: "pointer" }}
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-3 h-3" />
             </button>
           )}
         </div>
         {searchText && (
-          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
             {filteredGrouped.length} result{filteredGrouped.length !== 1 ? "s" : ""}
           </span>
         )}
+
         {/* Producer filter */}
         {(() => {
           const producers = [...new Set(allItems.map((i) => i.source).filter(Boolean))] as string[];
@@ -1678,7 +1666,7 @@ export default function Home() {
             <select
               value={producerFilter}
               onChange={(e) => setProducerFilter(e.target.value)}
-              className="text-[11px] px-2 py-1.5 rounded-md focus:outline-none"
+              className="text-[11px] px-2 py-1 rounded focus:outline-none"
               style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: producerFilter ? "#60A7C8" : "var(--text-muted)", fontFamily: "'IBM Plex Sans', sans-serif" }}
             >
               <option value="">All producers</option>
@@ -1687,23 +1675,23 @@ export default function Home() {
             </select>
           );
         })()}
-        {/* Reset stuck uploads — visible on Queue view when there are uploading items */}
+
+        {/* Queue-specific actions — right-aligned */}
         {focusView === "queue" && allItems.some((i) => i.status === "uploading") && !batchSending && (
           <button
             onClick={() => resetStuckMut.mutate()}
             disabled={resetStuckMut.isPending}
-            className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] rounded-md transition-colors"
+            className="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded transition-colors"
             style={{ background: "rgba(234,179,8,0.1)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)" }}
           >
             {resetStuckMut.isPending ? "Resetting…" : "↻ Reset Stuck"}
           </button>
         )}
-        {/* Send All Ready to Meta — visible on Queue view */}
         {focusView === "queue" && (
           <button
             onClick={() => openUploadPreview()}
             disabled={batchSending || (viewCounts.queue || 0) === 0}
-            className={`${allItems.some((i) => i.status === "uploading") && !batchSending ? "" : "ml-auto "}flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors`}
+            className={`${allItems.some((i) => i.status === "uploading") && !batchSending ? "" : "ml-auto "}flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold rounded transition-colors`}
             style={{
               background: batchSending ? "#007a9e" : "#0099C6",
               color: "white",
@@ -1718,7 +1706,7 @@ export default function Home() {
               ? uploadProgress.length > 0
                 ? `Uploading (${uploadProgress.filter(p => p.stage === "done").length}/${uploadProgress.length})…`
                 : "Uploading…"
-              : "Send All Ready to Meta"}
+              : "Send to Meta"}
           </button>
         )}
       </div>
