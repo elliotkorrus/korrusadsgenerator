@@ -670,7 +670,7 @@ async function uploadConceptGroup(
       const filename = row.filename || `${row.id}`;
 
       if (isVideo(mimeType, filename)) {
-        const videoFilename = filename.includes(".") ? filename : `${filename}.mp4`;
+        const videoFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.mp4`;
         emitProgress(conceptKey, { message: `Uploading ${row.dimensions} video (${(buffer.length/1024/1024).toFixed(0)}MB)...` });
         const videoId = await uploadVideoToMeta(meta.adAccountId, meta.accessToken, buffer, videoFilename, (pct) => {
           emitProgress(conceptKey, { chunkProgress: pct });
@@ -682,7 +682,7 @@ async function uploadConceptGroup(
           placement: placementType(row.dimensions),
         });
       } else {
-        const imgFilename = filename.includes(".") ? filename : `${filename}.jpg`;
+        const imgFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.jpg`;
         emitProgress(conceptKey, { message: `Uploading ${row.dimensions} image...` });
         const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, imgFilename);
         emitProgress(conceptKey, { chunkProgress: 100 });
