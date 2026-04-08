@@ -2,7 +2,7 @@ import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import { eq, desc, sql, inArray } from "drizzle-orm";
 import { db, schema } from "./db.js";
-import { generateAdName } from "../shared/naming.js";
+import { generateAdName, parseAdName } from "../shared/naming.js";
 
 const t = initTRPC.create();
 const publicProcedure = t.procedure;
@@ -1080,27 +1080,107 @@ const metaSettingsRouter = t.router({
         }
         const data = await res.json();
 
-        return (data.data || []).map((row: any) => {
-          // Extract purchase actions
+        // Load all uploaded queue items to join with insights by metaAdId or adName
+        const queueRows = await db.select().from(schema.uploadQueue)
+          .where(eq(schema.uploadQueue.status, "uploaded"));
+        const queueByMetaAdId = new Map<string, typeof queueRows[number]>();
+        const queueByAdName = new Map<string, typeof queueRows[number]>();
+        for (const q of queueRows) {
+          if (q.metaAdId) queueByMetaAdId.set(q.metaAdId, q);
+          if (q.generatedAdName) queueByAdName.set(q.generatedAdName, q);
+        }
+
+        // Parse rows and enrich with queue fields
+        const rawRows = (data.data || []).map((row: any) => {
           const purchases = (row.actions || []).find((a: any) => a.action_type === "purchase");
           const purchaseCost = (row.cost_per_action_type || []).find((a: any) => a.action_type === "purchase");
+          const impressions = Number(row.impressions || 0);
+          const clicks = Number(row.clicks || 0);
+          const spend = parseFloat(row.spend || "0");
+          const purchaseCount = purchases ? Number(purchases.value) : 0;
+
+          // Try to find matching queue row for field data
+          const queueRow = queueByMetaAdId.get(row.ad_id) || queueByAdName.get(row.ad_name);
+
+          // Extract fields from queue row or fallback to parsing the ad name
+          let fields: Record<string, string>;
+          if (queueRow) {
+            fields = {
+              handle: queueRow.handle || "",
+              initiative: queueRow.initiative || "",
+              variation: queueRow.variation || "",
+              angle: queueRow.angle || "",
+              creativeType: queueRow.creativeType || "",
+              source: queueRow.source || "",
+              contentType: queueRow.contentType || "",
+              dimensions: queueRow.dimensions || "",
+              copySlug: queueRow.copySlug || "",
+              product: queueRow.product || "",
+              date: queueRow.date || "",
+              filename: queueRow.filename || "",
+            };
+          } else {
+            const parsed = parseAdName(row.ad_name || "");
+            fields = {
+              handle: parsed.handle || "",
+              initiative: parsed.initiative || "",
+              variation: parsed.variation || "",
+              angle: parsed.angle || "",
+              creativeType: parsed.creativeType || "",
+              source: parsed.source || "",
+              contentType: parsed.contentType || "",
+              dimensions: "",
+              copySlug: parsed.copySlug || "",
+              product: parsed.product || "",
+              date: parsed.date || "",
+              filename: "",
+            };
+          }
 
           return {
-            adId: row.ad_id,
-            adName: row.ad_name,
-            impressions: Number(row.impressions || 0),
-            clicks: Number(row.clicks || 0),
-            ctr: parseFloat(row.ctr || "0"),
-            spend: parseFloat(row.spend || "0"),
-            cpc: parseFloat(row.cpc || "0"),
-            cpm: parseFloat(row.cpm || "0"),
-            purchases: purchases ? Number(purchases.value) : 0,
+            adId: row.ad_id as string,
+            adName: row.ad_name as string,
+            impressions,
+            clicks,
+            spend,
+            ctr: impressions > 0 ? clicks / impressions * 100 : 0,
+            cpc: clicks > 0 ? spend / clicks : 0,
+            cpm: impressions > 0 ? spend / impressions * 1000 : 0,
+            purchases: purchaseCount,
             costPerPurchase: purchaseCost ? parseFloat(purchaseCost.value) : 0,
-            roas: purchases && parseFloat(row.spend) > 0
-              ? (Number(purchases.value) * 50 / parseFloat(row.spend)).toFixed(2) // Estimate $50 AOV
-              : "0",
+            roas: purchaseCount > 0 && spend > 0
+              ? Number((purchaseCount * 50 / spend).toFixed(2))
+              : 0,
+            fileUrl: queueRow?.fileUrl || "",
+            fileMimeType: queueRow?.fileMimeType || "",
+            // All naming fields for pivot
+            ...fields,
           };
         });
+
+        // Deduplicate: merge rows with identical adName by summing metrics
+        const mergedMap = new Map<string, typeof rawRows[number]>();
+        for (const row of rawRows) {
+          const existing = mergedMap.get(row.adName);
+          if (existing) {
+            existing.impressions += row.impressions;
+            existing.clicks += row.clicks;
+            existing.spend += row.spend;
+            existing.purchases += row.purchases;
+            // Recalculate derived metrics
+            existing.ctr = existing.impressions > 0 ? existing.clicks / existing.impressions * 100 : 0;
+            existing.cpc = existing.clicks > 0 ? existing.spend / existing.clicks : 0;
+            existing.cpm = existing.impressions > 0 ? existing.spend / existing.impressions * 1000 : 0;
+            existing.costPerPurchase = existing.purchases > 0 ? existing.spend / existing.purchases : 0;
+            existing.roas = existing.purchases > 0 && existing.spend > 0
+              ? Number((existing.purchases * 50 / existing.spend).toFixed(2))
+              : 0;
+          } else {
+            mergedMap.set(row.adName, { ...row });
+          }
+        }
+
+        return Array.from(mergedMap.values());
       } catch (err: any) {
         console.error("Meta insights error:", err?.message || err);
         throw new Error(`Failed to load insights: ${err?.message || "Unknown error"}`);

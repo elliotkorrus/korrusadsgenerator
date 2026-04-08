@@ -34,6 +34,24 @@ export function generateAdName(fields: AdNameFields): string {
   ].filter(Boolean).join("__");
 }
 
+/** Parse a generated ad name back into its component fields.
+ *  Reverse of generateAdName — splits on `__` and maps positionally. */
+export function parseAdName(adName: string): Partial<AdNameFields> {
+  const parts = adName.split("__");
+  return {
+    handle: parts[0] || "",
+    initiative: parts[1] || "",
+    variation: parts[2] || "",
+    angle: parts[3] || "",
+    creativeType: parts[4] || "",
+    source: parts[5] || "",
+    contentType: parts[6] || "",
+    copySlug: parts[7] || "",
+    product: parts[8] || "",
+    date: parts[9] || "",
+  };
+}
+
 /** Split camelCase / PascalCase into sub-words for keyword matching */
 function splitCamelCase(token: string): string[] {
   // "DayToNightStills" → ["Day","To","Night","Stills"]
