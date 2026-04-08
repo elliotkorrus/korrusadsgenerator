@@ -8,6 +8,7 @@ const t = initTRPC.create();
 const publicProcedure = t.procedure;
 
 // In-memory cache for Meta ad sets (5 min TTL)
+// Cache filtered to ACTIVE campaigns + ACTIVE ad sets only
 const adSetsCache: { data: any[] | null; fetchedAt: number } = { data: null, fetchedAt: 0 };
 
 // ─── Upload Queue ───────────────────────────────────────────────
@@ -1002,7 +1003,7 @@ const metaSettingsRouter = t.router({
     try {
       const allAdSets: any[] = [];
       let url: string | null = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?${new URLSearchParams({
-        fields: "id,name,status,campaign{id,name}",
+        fields: "id,name,status,campaign{id,name,status}",
         access_token: settings.accessToken,
         limit: "200",
       }).toString()}`;
@@ -1016,13 +1017,15 @@ const metaSettingsRouter = t.router({
           break;
         }
         const data: any = await res.json();
-        const items = (data.data || []).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          status: s.status,
-          campaignId: s.campaign?.id,
-          campaignName: s.campaign?.name,
-        }));
+        const items = (data.data || [])
+          .filter((s: any) => s.status === "ACTIVE" && s.campaign?.status === "ACTIVE")
+          .map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            status: s.status,
+            campaignId: s.campaign?.id,
+            campaignName: s.campaign?.name,
+          }));
         allAdSets.push(...items);
         url = data.paging?.next || null;
       }

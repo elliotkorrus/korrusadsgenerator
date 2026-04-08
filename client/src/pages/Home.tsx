@@ -347,6 +347,7 @@ function ConceptCard({
   contentTypeOpts,
   creativeTypeOpts,
   copyOptions,
+  destUrlOpts,
 }: {
   group: { key: string; rows: QueueItem[]; shared: QueueItem };
   isSelected: boolean;
@@ -371,6 +372,7 @@ function ConceptCard({
   contentTypeOpts: { value: string; label: string }[];
   creativeTypeOpts: { value: string; label: string }[];
   copyOptions: { value: string; label: string }[];
+  destUrlOpts: { value: string; label: string }[];
 }) {
   const { key, rows, shared } = group;
   const dimColors: Record<string, string> = {
@@ -575,7 +577,10 @@ function ConceptCard({
               />
             </div>
             {[
-              { label: "Dest URL", el: <InlineText value={shared.destinationUrl || ""} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /> },
+              { label: "Dest URL", el: destUrlOpts.length > 0
+                ? <InlineSelect value={shared.destinationUrl || ""} options={destUrlOpts} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} />
+                : <InlineText value={shared.destinationUrl || ""} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." />
+              },
               { label: "Display", el: <InlineText value={shared.displayUrl || ""} onSave={(v) => onUpdateField("displayUrl", v)} disabled={isGroupLocked} placeholder="korrus.com" /> },
               { label: "CTA", el: <InlineSelect value={shared.cta || "SHOP_NOW"} options={CTA_OPTIONS} onSave={(v) => onUpdateField("cta", v)} disabled={isGroupLocked} /> },
             ].map(({ label, el }) => (
@@ -900,6 +905,7 @@ export default function Home() {
   const productOpts = fieldOpts["product"] || [{ value: "OIO", label: "OIO" }, { value: "SERUM", label: "SERUM" }];
   const contentTypeOpts = fieldOpts["contentType"] || [{ value: "VID", label: "Video" }, { value: "IMG", label: "Image" }, { value: "CAR", label: "Carousel" }, { value: "GIF", label: "GIF" }];
   const creativeTypeOpts = fieldOpts["creativeType"] || [{ value: "ESTATIC", label: "Elevated Static" }];
+  const destUrlOpts = fieldOpts["destinationUrl"] || [];
 
   // Group items by conceptKey
   const grouped = useMemo(() => {
@@ -1880,6 +1886,7 @@ export default function Home() {
                     contentTypeOpts={contentTypeOpts}
                     creativeTypeOpts={creativeTypeOpts}
                     copyOptions={copyOptions}
+                    destUrlOpts={destUrlOpts}
                   />
                 );
               })}
@@ -2171,7 +2178,12 @@ export default function Home() {
                           />
                         </td>
                         {/* Dest URL */}
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          {destUrlOpts.length > 0
+                            ? <InlineSelect value={shared.destinationUrl || ""} options={destUrlOpts} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} />
+                            : <InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." />
+                          }
+                        </td>
                         {/* CTA */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.cta || metaDefaults?.defaultCta || "SHOP_NOW"} options={CTA_OPTIONS} onSave={(v) => updateConceptField(key, "cta", v)} disabled={isGroupLocked} /></td>
                         {/* Actions */}
