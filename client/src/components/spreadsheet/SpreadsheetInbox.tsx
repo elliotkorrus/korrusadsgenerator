@@ -58,8 +58,8 @@ const COLUMNS: { key: string; label: string; width: string; type: "text" | "sele
   { key: "filename", label: "Filename", width: "100px", type: "text" },
   { key: "date", label: "Date", width: "75px", type: "text" },
   { key: "adSetId", label: "Ad Set", width: "130px", type: "select" },
-  { key: "destinationUrl", label: "Dest URL", width: "110px", type: "text" },
-  { key: "cta", label: "CTA", width: "80px", type: "text" },
+  { key: "destinationUrl", label: "Dest URL", width: "110px", type: "select" },
+  { key: "cta", label: "CTA", width: "80px", type: "select" },
 ];
 
 interface Props {
@@ -180,7 +180,7 @@ function Cell({
   }
 
   if (isEditing && !disabled) {
-    if (type === "select" && options) {
+    if (type === "select" && options && options.length > 0) {
       return (
         <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px", position: "relative" }}>
           <select

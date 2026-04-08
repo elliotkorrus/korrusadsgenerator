@@ -905,7 +905,7 @@ export default function Home() {
   const productOpts = fieldOpts["product"] || [{ value: "OIO", label: "OIO" }, { value: "SERUM", label: "SERUM" }];
   const contentTypeOpts = fieldOpts["contentType"] || [{ value: "VID", label: "Video" }, { value: "IMG", label: "Image" }, { value: "CAR", label: "Carousel" }, { value: "GIF", label: "GIF" }];
   const creativeTypeOpts = fieldOpts["creativeType"] || [{ value: "ESTATIC", label: "Elevated Static" }];
-  const destUrlOpts = fieldOpts["destinationUrl"] || [];
+  const destUrlOpts = fieldOpts["destinationUrl"] || [{ value: "https://www.korrus.com/collections/store", label: "Korrus Store" }];
 
   // Group items by conceptKey
   const grouped = useMemo(() => {
@@ -1913,7 +1913,7 @@ export default function Home() {
             onDelete={confirmDelete}
             onMarkReady={(ids) => bulkStatusMut.mutate({ ids, status: "ready" })}
             onOpenDrawer={(id) => setDrawerItemId(id)}
-            fieldOptions={{ source: sourceOpts, product: productOpts, contentType: contentTypeOpts, creativeType: creativeTypeOpts }}
+            fieldOptions={{ source: sourceOpts, product: productOpts, contentType: contentTypeOpts, creativeType: creativeTypeOpts, destinationUrl: destUrlOpts, cta: CTA_OPTIONS }}
             angleOptions={angleOptions}
             copyOptions={copyOptions}
             handleOptions={handleOptions}
