@@ -4,11 +4,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import * as trpcExpress from "@trpc/server/adapters/express";
 import multer from "multer";
+import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
+import { logger } from "./logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploads");
@@ -81,8 +83,71 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
       originalName: req.file.originalname,
     });
   } catch (err: any) {
-    console.error("R2 upload failed:", err);
+    logger.error("R2 upload failed", { error: err.message });
     res.status(500).json({ error: `Upload failed: ${err.message}` });
+  }
+});
+
+// ─── Bulk ZIP upload — extracts files and uploads each to R2 ────────────────
+app.post("/api/upload-zip", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: "No file provided" });
+    return;
+  }
+  if (req.file.mimetype !== "application/zip" && !req.file.originalname.endsWith(".zip")) {
+    res.status(400).json({ error: "File must be a ZIP archive" });
+    return;
+  }
+
+  try {
+    const zip = new AdmZip(req.file.buffer);
+    const entries = zip.getEntries();
+    const ALLOWED_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm"]);
+
+    const results: Array<{
+      filename: string;
+      folder: string;
+      fileUrl: string;
+      fileMimeType: string;
+      fileSize: number;
+    }> = [];
+
+    for (const entry of entries) {
+      // Skip directories and hidden files
+      if (entry.isDirectory || entry.entryName.startsWith("__MACOSX") || entry.entryName.startsWith(".")) continue;
+
+      const ext = "." + entry.entryName.split(".").pop()?.toLowerCase();
+      if (!ALLOWED_EXTS.has(ext)) continue;
+
+      const buffer = entry.getData();
+      const filename = entry.entryName.split("/").pop() || entry.entryName;
+      const folder = entry.entryName.includes("/")
+        ? entry.entryName.split("/").slice(0, -1).join("/")
+        : "";
+
+      // Guess MIME type from extension
+      const mimeMap: Record<string, string> = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp",
+        ".mp4": "video/mp4", ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo", ".webm": "video/webm",
+      };
+      const mimeType = mimeMap[ext] || "application/octet-stream";
+
+      const publicUrl = await uploadToR2(buffer, filename, mimeType);
+      results.push({
+        filename,
+        folder,
+        fileUrl: publicUrl,
+        fileMimeType: mimeType,
+        fileSize: buffer.length,
+      });
+    }
+
+    res.json({ success: true, files: results, count: results.length });
+  } catch (err: any) {
+    logger.error("ZIP upload failed", { error: err.message });
+    res.status(500).json({ error: `ZIP extraction failed: ${err.message}` });
   }
 });
 
@@ -168,7 +233,7 @@ app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
         await uploadAllReady();
       }
     } catch (err: any) {
-      console.error("Background Meta upload error:", err.message);
+      logger.error("Background Meta upload error", { error: err.message });
     } finally {
       activeUploadPromise = null;
     }
@@ -245,26 +310,26 @@ if (process.env.NODE_ENV === "production") {
 
 const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3002) : 3002;
 const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  logger.info("Server started", { port: PORT, env: process.env.NODE_ENV || "development" });
 });
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 async function gracefulShutdown(signal: string) {
-  console.log(`[${signal}] Shutting down gracefully...`);
+  logger.info("Shutting down gracefully", { signal });
 
   // Reset any in-progress uploads back to "ready" so they can be retried
   try {
     const result = await db.update(schema.uploadQueue)
       .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
       .where(eq(schema.uploadQueue.status, "uploading"));
-    console.log(`[shutdown] Reset uploading ads back to ready`);
-  } catch (err) {
-    console.error("[shutdown] Failed to reset uploading ads:", err);
+    logger.info("Reset uploading ads back to ready");
+  } catch (err: any) {
+    logger.error("Failed to reset uploading ads on shutdown", { error: err?.message || String(err) });
   }
 
   // Wait for active upload to finish (up to 30s)
   if (activeUploadPromise) {
-    console.log("[shutdown] Waiting for active upload to complete (30s max)...");
+    logger.info("Waiting for active upload to complete (30s max)");
     await Promise.race([
       activeUploadPromise,
       new Promise((r) => setTimeout(r, 30000)),
@@ -272,16 +337,48 @@ async function gracefulShutdown(signal: string) {
   }
 
   server.close(() => {
-    console.log("[shutdown] Server closed");
+    logger.info("Server closed");
     process.exit(0);
   });
 
   // Force exit after 45s
   setTimeout(() => {
-    console.error("[shutdown] Forced exit after timeout");
+    logger.error("Forced exit after timeout");
     process.exit(1);
   }, 45000);
 }
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// ── Scheduled uploads polling ───────────────────────────────────────
+setInterval(async () => {
+  try {
+    const due = await db.select().from(schema.scheduledUploads)
+      .where(eq(schema.scheduledUploads.status, "pending"));
+
+    const now = new Date();
+    for (const job of due) {
+      if (new Date(job.scheduledAt) <= now) {
+        // Mark as running
+        await db.update(schema.scheduledUploads)
+          .set({ status: "running" })
+          .where(eq(schema.scheduledUploads.id, job.id));
+
+        try {
+          const adIds = JSON.parse(job.adIds) as number[];
+          const result = await uploadAdsBatch(adIds);
+          await db.update(schema.scheduledUploads)
+            .set({ status: "completed", result: JSON.stringify(result.meta) })
+            .where(eq(schema.scheduledUploads.id, job.id));
+        } catch (err: any) {
+          await db.update(schema.scheduledUploads)
+            .set({ status: "failed", result: err.message })
+            .where(eq(schema.scheduledUploads.id, job.id));
+        }
+      }
+    }
+  } catch (err) {
+    logger.error("Scheduled uploads check failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+}, 60_000); // Check every minute

@@ -8,6 +8,8 @@ import UploadHistory from "./pages/UploadHistory";
 import MetaSettings from "./pages/MetaSettings";
 import NamingConfig from "./pages/NamingConfig";
 import HandleBank from "./pages/HandleBank";
+import PerformanceDashboard from "./pages/PerformanceDashboard";
+import ScheduledUploads from "./pages/ScheduledUploads";
 import Login from "./pages/Login";
 
 export default function App() {
@@ -28,6 +30,8 @@ export default function App() {
             <Route path="/naming-config" element={<NamingConfig />} />
             <Route path="/handles" element={<HandleBank />} />
             <Route path="/settings" element={<MetaSettings />} />
+            <Route path="/performance" element={<PerformanceDashboard />} />
+            <Route path="/scheduled" element={<ScheduledUploads />} />
             {/* Legacy redirects */}
             <Route path="/copy-library" element={<Navigate to="/naming-config" replace />} />
             <Route path="/angle-bank" element={<Navigate to="/naming-config" replace />} />

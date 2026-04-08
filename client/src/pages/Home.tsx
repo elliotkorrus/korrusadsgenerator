@@ -44,7 +44,11 @@ import {
   Kanban,
   FileSpreadsheet,
 } from "lucide-react";
-import { X } from "lucide-react";
+import { X, Keyboard } from "lucide-react";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
+import ConfirmDialog from "../components/ConfirmDialog";
+import LazyThumbnail from "../components/LazyThumbnail";
 
 const FOCUS_VIEWS = [
   { key: "inbox", label: "Inbox", desc: "New & drafts", statuses: ["draft"] },
@@ -663,6 +667,10 @@ export default function Home() {
     setPendingDelete(null);
   }
 
+  // Keyboard shortcuts
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
   // Feature 6: batch field edit
   const [showBatchFieldEdit, setShowBatchFieldEdit] = useState(false);
   const [batchEditField, setBatchEditField] = useState<string>(BATCH_EDITABLE_FIELDS[0].key);
@@ -971,6 +979,37 @@ export default function Home() {
     if (selectedKeys.size === allKeys.length) setSelectedKeys(new Set());
     else setSelectedKeys(new Set(allKeys));
   }
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────
+  useKeyboardShortcuts(useMemo(() => [
+    { key: "a", handler: () => toggleAll(), description: "Select all concepts" },
+    { key: "Escape", handler: () => {
+      if (showShortcutsHelp) { setShowShortcutsHelp(false); return; }
+      if (drawerItemId) { setDrawerItemId(null); return; }
+      if (selectedKeys.size > 0) { setSelectedKeys(new Set()); return; }
+      if (searchText) { setSearchText(""); return; }
+    }, description: "Deselect all / close panels" },
+    { key: "r", handler: () => {
+      if (selectedKeys.size === 0) return;
+      const ids = allItems.filter(i => selectedKeys.has(i.conceptKey || i.id.toString())).map(i => i.id);
+      if (ids.length > 0) bulkStatusMut.mutate({ ids, status: "ready" });
+    }, description: "Mark selected as Ready" },
+    { key: "d", handler: () => {
+      if (selectedKeys.size === 0) return;
+      const ids = allItems.filter(i => selectedKeys.has(i.conceptKey || i.id.toString())).map(i => i.id);
+      if (ids.length > 0) bulkStatusMut.mutate({ ids, status: "draft" });
+    }, description: "Mark selected as Draft" },
+    { key: "Delete", handler: () => {
+      if (selectedKeys.size === 0) return;
+      const ids = allItems.filter(i => selectedKeys.has(i.conceptKey || i.id.toString())).map(i => i.id);
+      if (ids.length > 0) confirmDelete(ids, `${ids.length} ad${ids.length > 1 ? "s" : ""}`);
+    }, description: "Delete selected" },
+    { key: "1", handler: () => setFocusView("inbox"), description: "Switch to Inbox view" },
+    { key: "2", handler: () => setFocusView("queue"), description: "Switch to Queue view" },
+    { key: "3", handler: () => setFocusView("live"), description: "Switch to Live view" },
+    { key: "/", handler: () => searchInputRef.current?.focus(), description: "Focus search" },
+    { key: "?", shift: true, handler: () => setShowShortcutsHelp(v => !v), description: "Show keyboard shortcuts" },
+  ], [allKeys, selectedKeys, allItems, drawerItemId, searchText, showShortcutsHelp, focusView]));
 
   // Feature 1: get row validation errors
   function getRowErrors(item: QueueItem): string[] {
@@ -1441,6 +1480,17 @@ export default function Home() {
           </div>
 
           <button
+            onClick={() => setShowShortcutsHelp(true)}
+            className="p-1.5 rounded transition-colors"
+            style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; }}
+            title="Keyboard shortcuts (Shift+?)"
+          >
+            <Keyboard className="w-3.5 h-3.5" />
+          </button>
+
+          <button
             onClick={() => setShowAddDialog(true)}
             className="flex items-center gap-1.5 px-3.5 py-1.5 transition-all text-[11px] font-semibold rounded-md"
             style={{ background: "linear-gradient(135deg, #0099C6, #255C9E)", color: "white", border: "none", boxShadow: "0 1px 3px rgba(0,153,198,0.25)" }}
@@ -1528,6 +1578,7 @@ export default function Home() {
         <div className="relative flex items-center flex-1 max-w-xs">
           <Search className="absolute left-2.5 w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
           <input
+            ref={searchInputRef}
             type="text"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
@@ -1975,7 +2026,7 @@ export default function Home() {
                               }}
                             >
                               {shared.fileUrl ? (
-                                <img
+                                <LazyThumbnail
                                   src={shared.fileUrl}
                                   alt={shared.filename}
                                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
@@ -2515,24 +2566,15 @@ export default function Home() {
       )}
 
       {/* Delete confirmation dialog */}
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
-          <div className="rounded-xl p-6 w-full max-w-sm space-y-4" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)", fontFamily: "'IBM Plex Sans', sans-serif" }}>
-            <div>
-              <h3 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>Delete {pendingDelete.label}?</h3>
-              <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>This can't be undone.</p>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setPendingDelete(null)} className="px-4 py-2 text-[12px] rounded-md" style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)", cursor: "pointer" }}>
-                Cancel
-              </button>
-              <button onClick={executeDelete} className="px-4 py-2 text-[12px] font-semibold rounded-md text-white" style={{ background: "#c0392b", border: "none", cursor: "pointer" }}>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete ads?"
+        message={pendingDelete ? `Are you sure you want to delete ${pendingDelete.label}? This cannot be undone.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={executeDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
 
       {/* Merge Dialog */}
       {showPreview && previewAds.length > 0 && (
@@ -2593,6 +2635,9 @@ export default function Home() {
           metaDefaults={metaDefaults}
         />
       )}
+
+      {/* Keyboard shortcuts help overlay */}
+      <KeyboardShortcutsHelp open={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />
 
       {/* Close add-size popovers on outside click */}
       {addSizeOpen && (

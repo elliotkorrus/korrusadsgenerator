@@ -8,6 +8,8 @@ import {
   Settings,
   LogOut,
   Users,
+  TrendingUp,
+  Calendar,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import TokenExpiryBanner from "./TokenExpiryBanner";
@@ -20,6 +22,8 @@ const FOCUS_VIEWS = [
 
 const OTHER_NAV = [
   { icon: History, label: "Upload History", path: "/history" },
+  { icon: TrendingUp, label: "Performance", path: "/performance" },
+  { icon: Calendar, label: "Scheduled", path: "/scheduled" },
   { icon: Users, label: "Handle Bank", path: "/handles" },
   { icon: BookOpen, label: "Naming & Config", path: "/naming-config" },
   { icon: Settings, label: "Meta Settings", path: "/settings" },

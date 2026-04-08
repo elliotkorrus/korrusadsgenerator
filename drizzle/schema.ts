@@ -110,6 +110,15 @@ export const auditLog = pgTable("audit_log", {
   index("idx_audit_log_created_at").on(table.createdAt),
 ]);
 
+export const scheduledUploads = pgTable("scheduled_uploads", {
+  id: serial("id").primaryKey(),
+  adIds: text("ad_ids").notNull(), // JSON array of ad IDs
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  status: text("status").notNull().default("pending"), // pending, running, completed, failed
+  result: text("result"), // JSON result after execution
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const fieldOptions = pgTable("field_options", {
   id: serial("id").primaryKey(),
   field: text("field").notNull(),

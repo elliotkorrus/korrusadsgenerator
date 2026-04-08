@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
-import { Copy, Check, Plus, Pencil, Trash2, X } from "lucide-react";
+import { Copy, Check, Plus, Pencil, Trash2, X, Sparkles, Loader2 } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
+import { useToast } from "../components/Toast";
 
 // ─── Shared ──────────────────────────────────────────────────────────────────
 
@@ -202,29 +204,90 @@ const copyStatusColors: Record<string, string> = {
 
 function CopyTab() {
   const utils = trpc.useUtils();
+  const toast = useToast();
   const { data: items = [] } = trpc.copy.list.useQuery({});
   const createMut = trpc.copy.create.useMutation({ onSuccess: () => { utils.copy.list.invalidate(); setOpen(false); } });
   const updateMut = trpc.copy.update.useMutation({ onSuccess: () => { utils.copy.list.invalidate(); setOpen(false); } });
   const deleteMut = trpc.copy.delete.useMutation({ onSuccess: () => utils.copy.list.invalidate() });
+  const generateMut = trpc.copy.generateCopy.useMutation({
+    onSuccess: (suggestions) => {
+      setAiSuggestions(suggestions);
+    },
+    onError: (err) => {
+      toast.error("AI generation failed", err.message);
+    },
+  });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CopyEntry | null>(null);
   const [form, setForm] = useState(emptyCopyForm);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<Array<{ copySlug: string; headline: string; bodyCopy: string }>>([]);
 
   function openCreate() { setEditing(null); setForm(emptyCopyForm); setOpen(true); }
   function openEdit(item: CopyEntry) { setEditing(item); setForm({ copySlug: item.copySlug, headline: item.headline, bodyCopy: item.bodyCopy, product: item.product, status: item.status as any }); setOpen(true); }
   function handleSubmit(e: React.FormEvent) { e.preventDefault(); editing ? updateMut.mutate({ id: editing.id, ...form }) : createMut.mutate(form); }
 
+  function saveSuggestion(s: { copySlug: string; headline: string; bodyCopy: string }) {
+    createMut.mutate({ copySlug: s.copySlug, headline: s.headline, bodyCopy: s.bodyCopy, product: "BULB", status: "draft" });
+    setAiSuggestions(prev => prev.filter(x => x.copySlug !== s.copySlug));
+    toast.success("Saved", `${s.copySlug} added to copy library`);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Headline and body copy variants — linked to the Copy field (position 9) in the ad name</p>
-        <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-white text-[11px] font-semibold rounded-md"
-          style={{ background: "#0099C6" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}>
-          <Plus className="w-3.5 h-3.5" /> Add Copy
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => generateMut.mutate({ count: 3 })}
+            disabled={generateMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors"
+            style={{ background: "rgba(168,85,247,0.1)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.2)" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(168,85,247,0.18)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(168,85,247,0.1)"; }}
+          >
+            {generateMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {generateMut.isPending ? "Generating…" : "AI Generate"}
+          </button>
+          <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-white text-[11px] font-semibold rounded-md"
+            style={{ background: "#0099C6" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#007a9e"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#0099C6"; }}>
+            <Plus className="w-3.5 h-3.5" /> Add Copy
+          </button>
+        </div>
       </div>
+
+      {/* AI Suggestions */}
+      {aiSuggestions.length > 0 && (
+        <div className="mb-4 rounded-lg p-4 space-y-3" style={{ background: "rgba(168,85,247,0.05)", border: "1px solid rgba(168,85,247,0.15)" }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5" style={{ color: "#a855f7" }} />
+              <span className="text-[11px] font-semibold" style={{ color: "#a855f7" }}>AI Suggestions</span>
+            </div>
+            <button onClick={() => setAiSuggestions([])} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Dismiss all</button>
+          </div>
+          {aiSuggestions.map((s) => (
+            <div key={s.copySlug} className="rounded-md p-3" style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <code className="text-[11px]" style={{ color: "#f472b6", fontFamily: "'IBM Plex Mono', monospace" }}>{s.copySlug}</code>
+                  <p className="text-[12px] font-medium mt-1" style={{ color: "var(--text-primary)" }}>{s.headline}</p>
+                  <p className="text-[11px] mt-0.5" style={{ color: "var(--text-secondary)" }}>{s.bodyCopy}</p>
+                </div>
+                <button
+                  onClick={() => saveSuggestion(s)}
+                  className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold rounded-md transition-colors"
+                  style={{ background: "#0099C6", color: "white" }}
+                >
+                  <Plus className="w-3 h-3" /> Save
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--surface-3)" }}>
         <table className="w-full" style={{ fontSize: "11px", borderCollapse: "collapse" }}>
           <thead style={{ background: "var(--surface-1)", borderBottom: "1px solid var(--surface-3)" }}>
@@ -250,7 +313,7 @@ function CopyTab() {
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={() => deleteMut.mutate({ id: item.id })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                  <button onClick={() => setDeleteTarget({ id: item.id, label: item.copySlug })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                     <Trash2 className="w-3 h-3" />
@@ -262,6 +325,16 @@ function CopyTab() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete copy entry?"
+        message={deleteTarget ? `Delete "${deleteTarget.label}"? Ads using this copy slug will need to be updated.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => { if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id }); setDeleteTarget(null); }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)" }}>
@@ -343,6 +416,7 @@ function LabelsTab() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Angle | null>(null);
   const [form, setForm] = useState(emptyAngleForm);
+  const [deleteAngleTarget, setDeleteAngleTarget] = useState<{ id: number; label: string } | null>(null);
 
   function openCreate() { setEditing(null); setForm(emptyAngleForm); setOpen(true); }
   function openEdit(item: Angle) { setEditing(item); setForm({ angleSlug: item.angleSlug, description: item.description, example: item.example, product: item.product, funnelStage: item.funnelStage as any, sourceTypeFit: item.sourceTypeFit || "", status: item.status as any }); setOpen(true); }
@@ -383,7 +457,7 @@ function LabelsTab() {
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={() => deleteMut.mutate({ id: item.id })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                  <button onClick={() => setDeleteAngleTarget({ id: item.id, label: item.angleSlug })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                     <Trash2 className="w-3 h-3" />
@@ -395,6 +469,16 @@ function LabelsTab() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={!!deleteAngleTarget}
+        title="Delete label?"
+        message={deleteAngleTarget ? `Delete "${deleteAngleTarget.label}"? This cannot be undone.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => { if (deleteAngleTarget) deleteMut.mutate({ id: deleteAngleTarget.id }); setDeleteAngleTarget(null); }}
+        onCancel={() => setDeleteAngleTarget(null)}
+      />
 
       {/* Creative Types section */}
       <div className="mt-6">
@@ -541,6 +625,7 @@ function OptionsTab() {
   const toggleMut = trpc.fieldOptions.update.useMutation({ onSuccess: () => utils.fieldOptions.list.invalidate() });
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteOptTarget, setDeleteOptTarget] = useState<{ id: number; label: string } | null>(null);
   const [formField, setFormField] = useState("");
   const [formValue, setFormValue] = useState("");
   const [formLabel, setFormLabel] = useState("");
@@ -592,7 +677,7 @@ function OptionsTab() {
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                       <Pencil className="w-3 h-3" />
                     </button>
-                    <button onClick={() => deleteMut.mutate({ id: opt.id })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                    <button onClick={() => setDeleteOptTarget({ id: opt.id, label: opt.value })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                       <Trash2 className="w-3 h-3" />
@@ -645,7 +730,7 @@ function OptionsTab() {
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                       <Pencil className="w-3 h-3" />
                     </button>
-                    <button onClick={() => deleteMut.mutate({ id: opt.id })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
+                    <button onClick={() => setDeleteOptTarget({ id: opt.id, label: opt.value })} className="p-1.5 rounded-sm transition-colors" style={{ color: "var(--text-muted)" }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f85149"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.08)"; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLButtonElement).style.background = ""; }}>
                       <Trash2 className="w-3 h-3" />
@@ -686,6 +771,16 @@ function OptionsTab() {
           </form>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteOptTarget}
+        title="Delete option?"
+        message={deleteOptTarget ? `Delete "${deleteOptTarget.label}"? This cannot be undone.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => { if (deleteOptTarget) deleteMut.mutate({ id: deleteOptTarget.id }); setDeleteOptTarget(null); }}
+        onCancel={() => setDeleteOptTarget(null)}
+      />
     </div>
   );
 }

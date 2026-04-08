@@ -28,6 +28,48 @@ const uploadQueueRouter = t.router({
         .orderBy(desc(schema.uploadQueue.createdAt));
     }),
 
+  listPaginated: publicProcedure
+    .input(z.object({
+      status: z.string().optional(),
+      limit: z.number().min(1).max(500).default(200),
+      offset: z.number().min(0).default(0),
+    }).optional())
+    .query(async ({ input }) => {
+      const limit = input?.limit ?? 200;
+      const offset = input?.offset ?? 0;
+
+      // Count total
+      let countResult;
+      if (input?.status && input.status !== "all") {
+        countResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.uploadQueue)
+          .where(eq(schema.uploadQueue.status, input.status));
+      } else {
+        countResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.uploadQueue);
+      }
+      const total = Number(countResult[0].count);
+
+      // Fetch page
+      let items;
+      if (input?.status && input.status !== "all") {
+        items = await db.select().from(schema.uploadQueue)
+          .where(eq(schema.uploadQueue.status, input.status))
+          .orderBy(desc(schema.uploadQueue.createdAt))
+          .limit(limit)
+          .offset(offset);
+      } else {
+        items = await db.select().from(schema.uploadQueue)
+          .orderBy(desc(schema.uploadQueue.createdAt))
+          .limit(limit)
+          .offset(offset);
+      }
+
+      return { items, total, limit, offset };
+    }),
+
   counts: publicProcedure.query(async () => {
     const rows = await db
       .select({
@@ -513,6 +555,74 @@ const copyLibraryRouter = t.router({
         .where(eq(schema.copyLibrary.id, input.id));
       return { success: true };
     }),
+
+  generateCopy: publicProcedure
+    .input(z.object({
+      angle: z.string().optional(),
+      product: z.string().optional(),
+      tone: z.string().optional(),
+      count: z.number().min(1).max(5).default(3),
+    }))
+    .mutation(async ({ input }) => {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured. Add it in Railway environment variables.");
+
+      // Load existing copy for context
+      const existingCopy = await db.select().from(schema.copyLibrary).limit(10);
+      const existingExamples = existingCopy.map(c =>
+        `Slug: ${c.copySlug}\nHeadline: ${c.headline}\nBody: ${c.bodyCopy}`
+      ).join("\n\n");
+
+      // Load angles for context
+      const angles = await db.select().from(schema.angleBank);
+      const angleContext = input.angle
+        ? angles.find(a => a.angleSlug === input.angle)
+        : null;
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey });
+
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        messages: [{
+          role: "user",
+          content: `You are a direct-response copywriter for Korrus, a circadian lighting brand that makes the OIO bulb — the only LED that fully eliminates blue light at night (not just shifts color temperature).
+
+Brand voice: "The Outlaw Sage" — erudite, fearless, meticulous, earnest, assured. Think Reddit-style authentic, not corporate.
+
+Target audience: wellness-oriented professionals, 25-45, $100K-$300K income.
+
+${angleContext ? `Angle: ${angleContext.angleSlug} — ${angleContext.description}\nExample: ${angleContext.example}` : ""}
+${input.product ? `Product: ${input.product}` : "Product: OIO Bulb"}
+${input.tone ? `Tone: ${input.tone}` : ""}
+
+Here are existing copy examples for reference (match this style):
+${existingExamples}
+
+Generate ${input.count} NEW ad copy variations. Each must have:
+1. A copySlug (format: C-ShortName, PascalCase)
+2. A headline (short, punchy, conversational — think Reddit post title)
+3. Body copy (2-4 sentences, authentic voice, specific claims about blue light elimination)
+
+Return ONLY valid JSON array:
+[{"copySlug": "C-Example", "headline": "...", "bodyCopy": "..."}]`
+        }],
+      });
+
+      // Parse the response
+      const text = response.content[0].type === "text" ? response.content[0].text : "";
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error("Failed to parse AI response");
+
+      const suggestions = JSON.parse(jsonMatch[0]) as Array<{
+        copySlug: string;
+        headline: string;
+        bodyCopy: string;
+      }>;
+
+      return suggestions;
+    }),
 });
 
 // ─── Angle Bank ─────────────────────────────────────────────────
@@ -881,13 +991,13 @@ const metaSettingsRouter = t.router({
 
       // Paginate through all ad sets
       while (url) {
-        const res = await fetch(url);
+        const res: Response = await fetch(url);
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           console.error("Meta getAdSets failed:", res.status, errText);
           break;
         }
-        const data = await res.json();
+        const data: any = await res.json();
         const items = (data.data || []).map((s: any) => ({
           id: s.id,
           name: s.name,
@@ -907,6 +1017,77 @@ const metaSettingsRouter = t.router({
       throw new Error(`Failed to load ad sets from Meta: ${err?.message || "Unknown error"}`);
     }
   }),
+
+  getAdInsights: publicProcedure
+    .input(z.object({
+      dateRange: z.enum(["today", "last_7d", "last_14d", "last_30d"]).default("last_7d"),
+      adIds: z.array(z.string()).optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      const settingsRows = await db.select().from(schema.metaSettings);
+      const settings = settingsRows[0];
+      if (!settings?.accessToken || !settings?.adAccountId) return [];
+
+      const datePresets: Record<string, string> = {
+        today: "today",
+        last_7d: "last_7d",
+        last_14d: "last_14d",
+        last_30d: "last_30d",
+      };
+
+      try {
+        const params = new URLSearchParams({
+          fields: "ad_id,ad_name,impressions,clicks,ctr,spend,cpc,cpm,actions,cost_per_action_type",
+          date_preset: datePresets[input?.dateRange || "last_7d"],
+          access_token: settings.accessToken,
+          limit: "200",
+          level: "ad",
+        });
+
+        // If specific ad IDs requested, filter
+        if (input?.adIds && input.adIds.length > 0) {
+          params.set("filtering", JSON.stringify([{
+            field: "ad.id",
+            operator: "IN",
+            value: input.adIds,
+          }]));
+        }
+
+        const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/insights?${params.toString()}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          console.error("Meta insights failed:", res.status, errText);
+          return [];
+        }
+        const data = await res.json();
+
+        return (data.data || []).map((row: any) => {
+          // Extract purchase actions
+          const purchases = (row.actions || []).find((a: any) => a.action_type === "purchase");
+          const purchaseCost = (row.cost_per_action_type || []).find((a: any) => a.action_type === "purchase");
+
+          return {
+            adId: row.ad_id,
+            adName: row.ad_name,
+            impressions: Number(row.impressions || 0),
+            clicks: Number(row.clicks || 0),
+            ctr: parseFloat(row.ctr || "0"),
+            spend: parseFloat(row.spend || "0"),
+            cpc: parseFloat(row.cpc || "0"),
+            cpm: parseFloat(row.cpm || "0"),
+            purchases: purchases ? Number(purchases.value) : 0,
+            costPerPurchase: purchaseCost ? parseFloat(purchaseCost.value) : 0,
+            roas: purchases && parseFloat(row.spend) > 0
+              ? (Number(purchases.value) * 50 / parseFloat(row.spend)).toFixed(2) // Estimate $50 AOV
+              : "0",
+          };
+        });
+      } catch (err: any) {
+        console.error("Meta insights error:", err?.message || err);
+        throw new Error(`Failed to load insights: ${err?.message || "Unknown error"}`);
+      }
+    }),
 });
 
 // ─── Audit Log ─────────────────────────────────────────────────
@@ -933,18 +1114,46 @@ const auditRouter = t.router({
     .query(async ({ input }) => {
       const limit = input?.limit ?? 100;
       const offset = input?.offset ?? 0;
-      let query = db.select().from(schema.auditLog)
-        .orderBy(desc(schema.auditLog.createdAt))
-        .limit(limit)
-        .offset(offset);
       if (input?.action) {
-        query = db.select().from(schema.auditLog)
+        return db.select().from(schema.auditLog)
           .where(eq(schema.auditLog.action, input.action))
           .orderBy(desc(schema.auditLog.createdAt))
           .limit(limit)
           .offset(offset);
       }
-      return query;
+      return db.select().from(schema.auditLog)
+        .orderBy(desc(schema.auditLog.createdAt))
+        .limit(limit)
+        .offset(offset);
+    }),
+});
+
+// ─── Scheduled Uploads ─────────────────────────────────────────
+const scheduledUploadsRouter = t.router({
+  list: publicProcedure.query(async () => {
+    return db.select().from(schema.scheduledUploads)
+      .orderBy(desc(schema.scheduledUploads.scheduledAt));
+  }),
+
+  create: publicProcedure
+    .input(z.object({
+      adIds: z.array(z.number()),
+      scheduledAt: z.string(), // ISO date string
+    }))
+    .mutation(async ({ input }) => {
+      const [row] = await db.insert(schema.scheduledUploads).values({
+        adIds: JSON.stringify(input.adIds),
+        scheduledAt: new Date(input.scheduledAt),
+      }).returning();
+      return row;
+    }),
+
+  cancel: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await db.delete(schema.scheduledUploads)
+        .where(eq(schema.scheduledUploads.id, input.id));
+      return { success: true };
     }),
 });
 
@@ -957,6 +1166,7 @@ export const appRouter = t.router({
   meta: metaSettingsRouter,
   handles: handleBankRouter,
   audit: auditRouter,
+  scheduled: scheduledUploadsRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
 import { Plus, Pencil, Trash2, X } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 type HandleEntry = {
   id: number;
@@ -35,6 +36,7 @@ export default function HandleBank() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<HandleEntry | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; handle: string } | null>(null);
 
   function openCreate() {
     setEditing(null);
@@ -156,7 +158,7 @@ export default function HandleBank() {
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => deleteMut.mutate({ id: item.id })}
+                    onClick={() => setDeleteTarget({ id: item.id, handle: item.handle })}
                     className="p-1.5 rounded-sm transition-colors ml-1"
                     style={{ color: "var(--text-muted)" }}
                     onMouseEnter={(e) => {
@@ -305,6 +307,16 @@ export default function HandleBank() {
           </form>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete handle?"
+        message={deleteTarget ? `Delete "${deleteTarget.handle}"? Any ads using this handle will need to be reassigned.` : ""}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => { if (deleteTarget) deleteMut.mutate({ id: deleteTarget.id }); setDeleteTarget(null); }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
