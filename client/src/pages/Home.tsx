@@ -15,6 +15,7 @@ import AdSetPicker from "../components/AdSetPicker";
 import PreUploadPreview from "../components/PreUploadPreview";
 import { useToast } from "../components/Toast";
 import { useUploadProgress, stageName } from "../hooks/useUploadProgress";
+import UploadOverlay from "../components/UploadOverlay";
 import { useStickyDefaults } from "../hooks/useStickyDefaults";
 import { groupFilesByBaseName } from "../utils/autoGroup";
 import {
@@ -109,7 +110,21 @@ const BATCH_EDITABLE_FIELDS = [
   { key: "variation", label: "Variation" },
   { key: "copySlug", label: "Copy Slug" },
   { key: "adSetId", label: "Ad Set" },
+  { key: "cta", label: "CTA" },
 ] as const;
+
+const CTA_OPTIONS = [
+  { value: "SHOP_NOW", label: "Shop Now" },
+  { value: "LEARN_MORE", label: "Learn More" },
+  { value: "SIGN_UP", label: "Sign Up" },
+  { value: "SUBSCRIBE", label: "Subscribe" },
+  { value: "GET_OFFER", label: "Get Offer" },
+  { value: "CONTACT_US", label: "Contact Us" },
+  { value: "DOWNLOAD", label: "Download" },
+  { value: "ORDER_NOW", label: "Order Now" },
+  { value: "BOOK_NOW", label: "Book Now" },
+  { value: "NO_BUTTON", label: "No Button" },
+];
 
 // Today's date in MMDDYY format
 function getTodayMMDDYY(): string {
@@ -558,7 +573,7 @@ function ConceptCard({
             {[
               { label: "Dest URL", el: <InlineText value={shared.destinationUrl || ""} onSave={(v) => onUpdateField("destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /> },
               { label: "Display", el: <InlineText value={shared.displayUrl || ""} onSave={(v) => onUpdateField("displayUrl", v)} disabled={isGroupLocked} placeholder="korrus.com" /> },
-              { label: "CTA", el: <InlineText value={shared.cta || ""} onSave={(v) => onUpdateField("cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /> },
+              { label: "CTA", el: <InlineSelect value={shared.cta || "SHOP_NOW"} options={CTA_OPTIONS} onSave={(v) => onUpdateField("cta", v)} disabled={isGroupLocked} /> },
             ].map(({ label, el }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <span className="text-[10px] flex-shrink-0 w-14" style={{ color: "var(--text-muted)" }}>{label}</span>
@@ -1180,6 +1195,43 @@ export default function Home() {
     setBatchEditValue("");
   }
 
+  // Copy shared fields from first selected concept to all other selected concepts
+  const COPYABLE_FIELDS = ["handle", "initiative", "angle", "creativeType", "source", "product", "copySlug", "date", "destinationUrl", "displayUrl", "cta", "adSetId", "adSetName", "pageId", "instagramAccountId"] as const;
+  const [copyingFirst, setCopyingFirst] = useState(false);
+  async function copyFirstToAll() {
+    const keys = [...selectedKeys];
+    if (keys.length < 2) return;
+    const firstGroup = grouped.find((g) => g.key === keys[0]);
+    if (!firstGroup) return;
+    const source = firstGroup.rows[0];
+    if (!source) return;
+
+    setCopyingFirst(true);
+    try {
+      for (let i = 1; i < keys.length; i++) {
+        const targetGroup = grouped.find((g) => g.key === keys[i]);
+        if (!targetGroup) continue;
+        for (const row of targetGroup.rows) {
+          const updates: Record<string, any> = {};
+          for (const field of COPYABLE_FIELDS) {
+            const val = (source as any)[field];
+            if (val !== undefined && val !== null && val !== "") {
+              updates[field] = val;
+            }
+          }
+          if (Object.keys(updates).length > 0) {
+            await updateMut.mutateAsync({ id: row.id, ...updates });
+          }
+        }
+      }
+      toast.success("Fields copied", `Applied fields from first concept to ${keys.length - 1} other${keys.length > 2 ? "s" : ""}`);
+    } catch (err: any) {
+      toast.error("Copy failed", err.message);
+    } finally {
+      setCopyingFirst(false);
+    }
+  }
+
   const COL_COUNT = 21;
 
   // Get select options for currently-selected batch edit field
@@ -1194,6 +1246,7 @@ export default function Home() {
     angle: angleOptions,
     copySlug: copyOptions,
     adSetId: adSetOpts,
+    cta: CTA_OPTIONS,
   };
 
   return (
@@ -1598,6 +1651,17 @@ export default function Home() {
           >
             Delete All
           </button>
+          {/* Copy first concept's fields to all others */}
+          {selectedKeys.size >= 2 && (
+            <button
+              onClick={copyFirstToAll}
+              disabled={copyingFirst}
+              className="px-2.5 py-1 text-xs rounded-md transition-colors"
+              style={{ background: "rgba(96,167,200,0.1)", color: "#60A7C8", border: "1px solid rgba(96,167,200,0.3)" }}
+            >
+              {copyingFirst ? "Copying…" : "⬇ Copy First → All"}
+            </button>
+          )}
           {/* Feature 6: Edit Field button when 2+ selected */}
           {selectedKeys.size >= 2 && (
             <div className="relative">
@@ -2058,7 +2122,7 @@ export default function Home() {
                         {/* Dest URL */}
                         <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.destinationUrl || ""} onSave={(v) => updateConceptField(key, "destinationUrl", v)} disabled={isGroupLocked} placeholder="https://..." /></td>
                         {/* CTA */}
-                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineText value={shared.cta || ""} onSave={(v) => updateConceptField(key, "cta", v)} disabled={isGroupLocked} placeholder="SHOP_NOW" /></td>
+                        <td className="px-3 py-1.5 whitespace-nowrap"><InlineSelect value={shared.cta || metaDefaults?.defaultCta || "SHOP_NOW"} options={CTA_OPTIONS} onSave={(v) => updateConceptField(key, "cta", v)} disabled={isGroupLocked} /></td>
                         {/* Actions */}
                         <td className="px-3 py-2 whitespace-nowrap">
                           <div className="flex items-center gap-1">
@@ -2487,6 +2551,8 @@ export default function Home() {
           onClose={() => setShowValidationModal(false)}
         />
       )}
+
+      <UploadOverlay progress={uploadProgress} active={batchSending} />
 
       {showMergeDialog && selectedKeys.size >= 2 && (
         <MergeDialog
