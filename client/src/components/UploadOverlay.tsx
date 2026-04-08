@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { CloudUpload, CheckCircle2, XCircle } from "lucide-react";
+import { CloudUpload, CheckCircle2, XCircle, Loader2, X, ChevronUp, ChevronDown } from "lucide-react";
 import type { UploadProgress } from "../hooks/useUploadProgress";
 import { stageName } from "../hooks/useUploadProgress";
 
@@ -49,7 +49,7 @@ function Confetti() {
     }
 
     let frame = 0;
-    const maxFrames = 180; // ~3 seconds at 60fps
+    const maxFrames = 180;
     let raf: number;
 
     function animate() {
@@ -58,7 +58,7 @@ function Confetti() {
 
       for (const p of particles) {
         p.x += p.vx;
-        p.vy += 0.08; // gravity
+        p.vy += 0.08;
         p.y += p.vy;
         p.rotation += p.rotSpeed;
 
@@ -89,20 +89,46 @@ function Confetti() {
   );
 }
 
+// Stage step indicator
+const STAGES = ["uploading_asset", "processing_video", "creating_creative", "creating_ad", "done"] as const;
+
+function StageProgress({ stage, chunkProgress }: { stage: string; chunkProgress: number }) {
+  const stageIdx = STAGES.indexOf(stage as any);
+  return (
+    <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+      {STAGES.slice(0, -1).map((s, i) => {
+        const isComplete = stageIdx > i || stage === "done";
+        const isCurrent = stageIdx === i && stage !== "done" && stage !== "error";
+        return (
+          <div key={s} style={{ position: "relative", flex: 1, height: 3, borderRadius: 2, overflow: "hidden", background: "var(--surface-3)" }}>
+            <div style={{
+              height: "100%",
+              borderRadius: 2,
+              transition: "width 0.4s ease-out",
+              width: isComplete ? "100%" : isCurrent ? `${Math.max(chunkProgress, 10)}%` : "0%",
+              background: isComplete ? "#22c55e" : isCurrent ? "#0099C6" : "transparent",
+            }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function UploadOverlay({ progress, active }: UploadOverlayProps) {
   const [showCelebration, setShowCelebration] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const prevActiveRef = useRef(false);
 
-  // Show overlay when active
   useEffect(() => {
     if (active) {
       setVisible(true);
       setShowCelebration(false);
+      setExpanded(true);
     }
   }, [active]);
 
-  // Detect completion: was active, now all done
   useEffect(() => {
     if (prevActiveRef.current && !active && progress.length > 0) {
       const allDone = progress.every((p) => p.stage === "done" || p.stage === "error");
@@ -112,10 +138,9 @@ export default function UploadOverlay({ progress, active }: UploadOverlayProps) 
         setTimeout(() => {
           setShowCelebration(false);
           setVisible(false);
-        }, 3500);
+        }, 4000);
       } else {
-        // All failed
-        setTimeout(() => setVisible(false), 2000);
+        setTimeout(() => setVisible(false), 3000);
       }
     }
     prevActiveRef.current = active;
@@ -127,70 +152,102 @@ export default function UploadOverlay({ progress, active }: UploadOverlayProps) 
   const failed = progress.filter((p) => p.stage === "error").length;
   const total = progress.length;
   const inProgress = total - done - failed;
-  const overallPct = total > 0 ? Math.round(((done + failed) / total) * 100) : 0;
-
-  // Current uploading item
-  const current = progress.find(
-    (p) => p.stage !== "done" && p.stage !== "error"
-  );
-
   const allComplete = inProgress === 0;
+
+  const current = progress.find((p) => p.stage !== "done" && p.stage !== "error");
+
+  // Overall progress: weight each concept equally, with stage-based sub-progress
+  const overallPct = total > 0 ? Math.round(
+    progress.reduce((sum, p) => {
+      if (p.stage === "done") return sum + 100;
+      if (p.stage === "error") return sum + 100;
+      const idx = STAGES.indexOf(p.stage as any);
+      const stagePct = idx >= 0 ? (idx / (STAGES.length - 1)) * 100 : 0;
+      const chunkBonus = p.chunkProgress > 0 ? (p.chunkProgress / (STAGES.length - 1)) : 0;
+      return sum + stagePct + chunkBonus;
+    }, 0) / total
+  ) : 0;
 
   return (
     <>
       {showCelebration && <Confetti />}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 24,
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 10000,
-          width: "min(480px, 90vw)",
+      <div style={{
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        zIndex: 10000,
+        width: expanded ? "min(420px, calc(100vw - 48px))" : 280,
+        transition: "width 0.3s ease",
+        fontFamily: "'IBM Plex Sans', sans-serif",
+      }}>
+        <div style={{
           background: "var(--surface-1)",
-          border: `1px solid ${allComplete ? (failed > 0 ? "rgba(239,68,68,0.4)" : "rgba(34,197,94,0.4)") : "rgba(0,153,198,0.4)"}`,
-          borderRadius: 12,
-          padding: "16px 20px",
-          boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
-          animation: "upload-overlay-in 0.3s ease-out",
-        }}
-      >
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          {allComplete ? (
-            failed > 0 ? (
-              <XCircle size={20} style={{ color: "#ef4444" }} />
-            ) : (
-              <CheckCircle2 size={20} style={{ color: "#22c55e" }} />
-            )
-          ) : (
-            <CloudUpload size={20} style={{ color: "#0099C6" }} className="animate-pulse" />
-          )}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-              {allComplete
-                ? failed > 0
-                  ? `Upload complete — ${done} succeeded, ${failed} failed`
-                  : `All ${done} ad${done !== 1 ? "s" : ""} uploaded successfully!`
-                : `Uploading to Meta…`}
-            </div>
-            {!allComplete && current && (
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                {stageName(current.stage)} — {current.message}
-              </div>
-            )}
-          </div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: allComplete ? (failed > 0 ? "#ef4444" : "#22c55e") : "#0099C6", fontFamily: "monospace" }}>
-            {overallPct}%
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+          border: `1px solid ${allComplete ? (failed > 0 ? "rgba(239,68,68,0.3)" : "rgba(34,197,94,0.3)") : "rgba(0,153,198,0.3)"}`,
+          borderRadius: 14,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(0,153,198,0.08)",
+          overflow: "hidden",
+          animation: "upload-slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+        }}>
+          {/* Header bar */}
           <div
             style={{
+              display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+              cursor: "pointer",
+              background: allComplete
+                ? failed > 0 ? "rgba(239,68,68,0.06)" : "rgba(34,197,94,0.06)"
+                : "rgba(0,153,198,0.06)",
+            }}
+            onClick={() => setExpanded(v => !v)}
+          >
+            {/* Icon */}
+            <div style={{
+              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: allComplete
+                ? failed > 0 ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)"
+                : "rgba(0,153,198,0.12)",
+            }}>
+              {allComplete ? (
+                failed > 0 ? <XCircle size={16} style={{ color: "#ef4444" }} />
+                  : <CheckCircle2 size={16} style={{ color: "#22c55e" }} />
+              ) : (
+                <Loader2 size={16} style={{ color: "#0099C6" }} className="animate-spin" />
+              )}
+            </div>
+
+            {/* Title */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.3 }}>
+                {allComplete
+                  ? failed > 0
+                    ? `${done} uploaded, ${failed} failed`
+                    : `${done} ad${done !== 1 ? "s" : ""} uploaded!`
+                  : "Uploading to Meta"}
+              </div>
+              {!allComplete && (
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 1 }}>
+                  {done}/{total} complete
+                  {current ? ` · ${stageName(current.stage)}` : ""}
+                </div>
+              )}
+            </div>
+
+            {/* Percentage + collapse */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                fontSize: 18, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace",
+                color: allComplete ? (failed > 0 ? "#ef4444" : "#22c55e") : "#0099C6",
+              }}>
+                {overallPct}%
+              </span>
+              {expanded ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} /> : <ChevronUp size={14} style={{ color: "var(--text-muted)" }} />}
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ height: 3, background: "var(--surface-3)" }}>
+            <div style={{
               height: "100%",
-              borderRadius: 3,
               transition: "width 0.5s ease-out",
               width: `${overallPct}%`,
               background: allComplete
@@ -198,52 +255,84 @@ export default function UploadOverlay({ progress, active }: UploadOverlayProps) 
                   ? "linear-gradient(90deg, #22c55e, #ef4444)"
                   : "#22c55e"
                 : "linear-gradient(90deg, #0099C6, #60A7C8)",
-            }}
-          />
-        </div>
+            }} />
+          </div>
 
-        {/* Per-concept progress */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 120, overflowY: "auto" }}>
-          {progress.map((p) => (
-            <div
-              key={p.conceptKey}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 11,
-              }}
-            >
-              <span style={{
-                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                background: p.stage === "done" ? "#22c55e" : p.stage === "error" ? "#ef4444" : "#0099C6",
-                animation: p.stage !== "done" && p.stage !== "error" ? "pulse 1.5s infinite" : "none",
-              }} />
-              <span style={{
-                flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                fontFamily: "monospace",
-                color: p.stage === "error" ? "#f87171" : "var(--text-muted)",
-              }}>
-                {p.adName || p.conceptKey}
-              </span>
-              <span style={{
-                fontSize: 10, flexShrink: 0,
-                color: p.stage === "done" ? "#22c55e" : p.stage === "error" ? "#f87171" : "#60A7C8",
-              }}>
-                {p.stage === "done" ? "✓" : p.stage === "error" ? "✕" : `${stageName(p.stage)}${p.chunkProgress > 0 ? ` ${p.chunkProgress}%` : ""}`}
-              </span>
+          {/* Expanded detail */}
+          {expanded && (
+            <div style={{
+              padding: "10px 16px 14px",
+              maxHeight: 300,
+              overflowY: "auto",
+            }}>
+              {progress.map((p) => {
+                const isDone = p.stage === "done";
+                const isError = p.stage === "error";
+                const isActive = !isDone && !isError;
+
+                return (
+                  <div
+                    key={p.conceptKey}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "8px 0",
+                      borderBottom: "1px solid var(--surface-2)",
+                    }}
+                  >
+                    {/* Status icon */}
+                    <div style={{
+                      width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      background: isDone ? "rgba(34,197,94,0.12)" : isError ? "rgba(239,68,68,0.12)" : "rgba(0,153,198,0.08)",
+                    }}>
+                      {isDone && <CheckCircle2 size={12} style={{ color: "#22c55e" }} />}
+                      {isError && <XCircle size={12} style={{ color: "#ef4444" }} />}
+                      {isActive && <Loader2 size={12} style={{ color: "#0099C6" }} className="animate-spin" />}
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        color: isError ? "#f87171" : "var(--text-primary)",
+                      }}>
+                        {p.adName || p.conceptKey}
+                      </div>
+                      {isActive && (
+                        <div style={{ marginTop: 4 }}>
+                          <StageProgress stage={p.stage} chunkProgress={p.chunkProgress} />
+                          <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>
+                            {p.message}
+                          </div>
+                        </div>
+                      )}
+                      {isError && p.message && (
+                        <div style={{ fontSize: 9, color: "#f87171", marginTop: 2 }}>
+                          {p.message}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right badge */}
+                    <div style={{
+                      flexShrink: 0, fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
+                      background: isDone ? "rgba(34,197,94,0.1)" : isError ? "rgba(239,68,68,0.1)" : "rgba(0,153,198,0.1)",
+                      color: isDone ? "#22c55e" : isError ? "#ef4444" : "#60A7C8",
+                    }}>
+                      {isDone ? "Done" : isError ? "Failed" : `${stageName(p.stage)}${p.chunkProgress > 0 ? ` ${p.chunkProgress}%` : ""}`}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
+          )}
         </div>
       </div>
+
       <style>{`
-        @keyframes upload-overlay-in {
-          from { opacity: 0; transform: translateX(-50%) translateY(20px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
+        @keyframes upload-slide-in {
+          from { opacity: 0; transform: translateY(30px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
     </>

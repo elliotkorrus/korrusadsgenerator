@@ -2593,6 +2593,7 @@ export default function Home() {
         <PreUploadPreview
           ads={previewAds as any}
           metaDefaults={metaDefaults as any}
+          adSets={adSetsForBatch as any}
           onConfirm={confirmAndUpload}
           onCancel={() => setShowPreview(false)}
           loading={batchSending}

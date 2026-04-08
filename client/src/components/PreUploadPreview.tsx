@@ -32,6 +32,7 @@ interface MetaDefaults {
 interface PreUploadPreviewProps {
   ads: AdItem[];
   metaDefaults: MetaDefaults | null;
+  adSets?: Array<{ id: string; name: string; campaignName?: string }>;
   onConfirm: () => void;
   onCancel: () => void;
   loading?: boolean;
@@ -60,7 +61,18 @@ const CTA_LABELS: Record<string, string> = {
   GET_OFFER: "Get Offer",
 };
 
-export default function PreUploadPreview({ ads, metaDefaults, onConfirm, onCancel, loading }: PreUploadPreviewProps) {
+export default function PreUploadPreview({ ads, metaDefaults, adSets, onConfirm, onCancel, loading }: PreUploadPreviewProps) {
+  // Build a lookup for fresh ad set names from the API
+  const adSetNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (adSets) {
+      for (const s of adSets) {
+        map.set(s.id, s.campaignName ? `${s.campaignName} → ${s.name}` : s.name);
+      }
+    }
+    return map;
+  }, [adSets]);
+
   const groups = useMemo(() => {
     const map = new Map<string, AdItem[]>();
     for (const ad of ads) {
@@ -82,11 +94,16 @@ export default function PreUploadPreview({ ads, metaDefaults, onConfirm, onCance
       if (!destUrl) warnings.push("No destination URL");
       if (groupAds.some((a) => !a.fileUrl)) warnings.push("Missing creative file(s)");
 
+      // Resolve fresh ad set name from API, fallback to stored name
+      const resolvedAdSetName = primary.adSetId
+        ? adSetNameMap.get(primary.adSetId) || primary.adSetName
+        : primary.adSetName;
+
       result.push({
         conceptKey,
         adName: primary.generatedAdName,
         ads: groupAds,
-        adSetName: primary.adSetName,
+        adSetName: resolvedAdSetName,
         adSetId: primary.adSetId,
         headline: primary.headline,
         bodyCopy: primary.bodyCopy,
