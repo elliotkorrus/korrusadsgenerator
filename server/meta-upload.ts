@@ -240,13 +240,14 @@ async function uploadImageToMeta(
   adAccountId: string,
   accessToken: string,
   imageBuffer: Buffer,
-  filename: string
+  filename: string,
+  mimeType?: string
 ): Promise<string> {
   const url = `${META_BASE}/act_${adAccountId}/adimages`;
 
   const formData = new FormData();
   formData.append("access_token", accessToken);
-  formData.append("filename", new Blob([new Uint8Array(imageBuffer)]), filename);
+  formData.append("filename", new Blob([new Uint8Array(imageBuffer)], { type: mimeType || "image/png" }), filename);
 
   return retryWithBackoff(async () => {
     const res = await metaFetch(url, { method: "POST", body: formData });
@@ -682,9 +683,9 @@ async function uploadConceptGroup(
           placement: placementType(row.dimensions),
         });
       } else {
-        const imgFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.jpg`;
+        const imgFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.png`;
         emitProgress(conceptKey, { message: `Uploading ${row.dimensions} image...` });
-        const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, imgFilename);
+        const hash = await uploadImageToMeta(meta.adAccountId, meta.accessToken, buffer, imgFilename, mimeType);
         emitProgress(conceptKey, { chunkProgress: 100 });
         assetEntries.push({
           id: hash,
