@@ -440,12 +440,17 @@ const uploadQueueRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
+      // Fetch all primary rows and track which dimensions already exist
       const primaryRows = await db
         .select()
         .from(schema.uploadQueue)
         .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey));
       const primary = primaryRows[0];
       if (!primary) throw new Error("Primary concept not found");
+
+      const primaryDims = new Set(primaryRows.map((r) => r.dimensions));
+      let merged = 0;
+      let skipped = 0;
 
       for (const sourceKey of input.secondaryConceptKeys) {
         const sourceRows = await db
@@ -454,6 +459,15 @@ const uploadQueueRouter = t.router({
           .where(eq(schema.uploadQueue.conceptKey, sourceKey));
 
         for (const row of sourceRows) {
+          // If primary already has this dimension, delete the duplicate
+          if (primaryDims.has(row.dimensions)) {
+            await db.delete(schema.uploadQueue)
+              .where(eq(schema.uploadQueue.id, row.id));
+            skipped++;
+            continue;
+          }
+
+          // Otherwise, merge it in with the primary's naming fields
           const newAdName = generateAdName({
             handle: primary.handle || "korruscircadian",
             brand: primary.brand,
@@ -488,9 +502,13 @@ const uploadQueueRouter = t.router({
               updatedAt: sql`now()`,
             })
             .where(eq(schema.uploadQueue.id, row.id));
+
+          // Track the newly added dimension so subsequent groups don't duplicate it
+          primaryDims.add(row.dimensions);
+          merged++;
         }
       }
-      return { success: true };
+      return { success: true, merged, skipped };
     }),
 });
 
