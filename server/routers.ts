@@ -137,7 +137,7 @@ const uploadQueueRouter = t.router({
       const conceptKey = input.conceptKey || [
         input.brand, input.initiative, input.variation, input.angle,
         input.source, input.product, input.contentType, input.creativeType,
-        input.copySlug, input.date
+        input.copySlug, input.filename, input.date
       ].join('__');
       const rows = await db
         .insert(schema.uploadQueue)

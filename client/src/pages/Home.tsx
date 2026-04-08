@@ -832,6 +832,42 @@ export default function Home() {
       }
     }
 
+    // Pre-compute conceptKeys for each pending row.
+    // Concept grouping rule: files with same metadata but DIFFERENT dimensions
+    // are size variants of one concept → share a key. Files with same metadata
+    // AND same dimensions are separate ads → each gets a unique key.
+    {
+      const buildBaseKey = (f: Record<string, string>) => [
+        f.brand, f.initiative, f.variation, f.angle, f.source,
+        f.product, f.contentType, f.creativeType, f.copySlug, f.filename, f.date,
+      ].join("__");
+
+      // Group pending rows by baseKey, then check for duplicate dimensions
+      const groups = new Map<string, PendingRow[]>();
+      for (const row of newPending) {
+        const key = buildBaseKey(row.fields);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(row);
+      }
+
+      for (const [baseKey, rows] of groups) {
+        // Count how many rows per dimension
+        const dimCounts = new Map<string, number>();
+        for (const r of rows) {
+          const d = r.fields.dimensions || "";
+          dimCounts.set(d, (dimCounts.get(d) || 0) + 1);
+        }
+        // If every file has a unique dimension, they're size variants → same key
+        const hasDuplicateDims = [...dimCounts.values()].some((c) => c > 1);
+        if (!hasDuplicateDims) {
+          for (const r of rows) (r as any)._conceptKey = baseKey;
+        } else {
+          // Duplicate dimensions exist → give each file a unique key
+          for (const r of rows) (r as any)._conceptKey = `${baseKey}__${r.tempId}`;
+        }
+      }
+    }
+
     setPendingRows((prev) => [...prev, ...newPending]);
 
     // Upload each file in background, create DB row, then remove from pending
@@ -851,16 +887,11 @@ export default function Home() {
           const uploadData = await uploadRes.json();
           if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
 
-          // Create queue entry
+          // Create queue entry — use pre-computed conceptKey from pending row
           await createMut.mutateAsync({
             ...row.fields,
             fileUrl: uploadData.fileUrl,
-            conceptKey: [
-              row.fields.brand, row.fields.initiative, row.fields.variation,
-              row.fields.angle, row.fields.source, row.fields.product,
-              row.fields.contentType, row.fields.creativeType,
-              row.fields.copySlug, row.fields.filename, row.fields.date,
-            ].join("__"),
+            conceptKey: (row as any)._conceptKey,
           } as any);
 
           // Remove from pending
