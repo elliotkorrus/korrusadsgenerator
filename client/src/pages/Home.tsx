@@ -938,7 +938,8 @@ export default function Home() {
   const creativeTypeOpts = fieldOpts["creativeType"] || [{ value: "ESTATIC", label: "Elevated Static" }];
   const destUrlOpts = fieldOpts["destinationUrl"] || [{ value: "https://www.korrus.com/collections/store", label: "Korrus Store" }];
 
-  // Group items by conceptKey
+  // Group items by conceptKey, then split groups with duplicate dimensions
+  // (duplicate dims = separate ads that got the same key, not size variants)
   const grouped = useMemo(() => {
     const map = new Map<string, QueueItem[]>();
     for (const item of items) {
@@ -946,11 +947,35 @@ export default function Home() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
     }
-    return Array.from(map.entries()).map(([key, rows]) => ({
-      key,
-      rows: rows.sort((a, b) => a.dimensions.localeCompare(b.dimensions)),
-      shared: rows[0],
-    }));
+    const result: { key: string; rows: QueueItem[]; shared: QueueItem }[] = [];
+    for (const [key, rows] of map) {
+      // Check for duplicate dimensions within this group
+      const dimSet = new Set(rows.map((r) => r.dimensions));
+      if (dimSet.size === rows.length) {
+        // All unique dimensions → genuine size variants, keep as one group
+        result.push({ key, rows: rows.sort((a, b) => a.dimensions.localeCompare(b.dimensions)), shared: rows[0] });
+      } else {
+        // Duplicate dimensions exist → split into: one group per unique dim + individual groups for dupes
+        const byDim = new Map<string, QueueItem[]>();
+        for (const r of rows) {
+          const d = r.dimensions || "";
+          if (!byDim.has(d)) byDim.set(d, []);
+          byDim.get(d)!.push(r);
+        }
+        for (const [, dimRows] of byDim) {
+          if (dimRows.length === 1) {
+            // Unique dimension in this group — keep it
+            result.push({ key: `${key}__${dimRows[0].id}`, rows: dimRows, shared: dimRows[0] });
+          } else {
+            // Multiple rows with same dimension — each becomes its own group
+            for (const r of dimRows) {
+              result.push({ key: `${key}__${r.id}`, rows: [r], shared: r });
+            }
+          }
+        }
+      }
+    }
+    return result;
   }, [items]);
 
   // Feature 4: filtered grouped array
