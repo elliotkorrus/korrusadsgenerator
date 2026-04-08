@@ -226,10 +226,16 @@ async function metaFetch(url: string, init?: RequestInit): Promise<Response> {
 /** Parses a Meta API JSON response and throws enriched errors for retryable codes */
 function checkMetaResponse(data: any): void {
   if (data.error) {
-    const err: any = new Error(JSON.stringify(data.error));
-    if (typeof data.error.code === "number") {
-      err.metaErrorCode = data.error.code;
-    }
+    // Build a human-readable message instead of raw JSON
+    const e = data.error;
+    const userMsg = e.error_user_msg || e.error_user_title || e.message || "Unknown Meta API error";
+    const detail = e.error_user_msg && e.message && e.message !== e.error_user_msg
+      ? ` (${e.message})`
+      : "";
+    const err: any = new Error(`${userMsg}${detail}`);
+    err.metaErrorCode = typeof e.code === "number" ? e.code : undefined;
+    err.metaSubcode = e.error_subcode;
+    err.rawError = e;
     throw err;
   }
 }
@@ -749,6 +755,16 @@ async function uploadConceptGroup(
 
     emitProgress(conceptKey, { stage: "done", chunkProgress: 100, message: "Upload complete!" });
     setTimeout(() => clearProgress(conceptKey), 10000); // Clear after 10s
+
+    // Audit log
+    try {
+      await db.insert(schema.auditLog).values({
+        action: "upload_to_meta",
+        entityType: "ad",
+        entityId: metaAdId,
+        details: JSON.stringify({ conceptKey, adIds, adName: metaAdName, adSetId, pageId }),
+      });
+    } catch {}
 
     return { conceptKey, adIds, success: true, metaAdId, metaCreativeId: creativeId };
   } catch (err: any) {

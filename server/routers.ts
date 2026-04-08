@@ -29,17 +29,18 @@ const uploadQueueRouter = t.router({
     }),
 
   counts: publicProcedure.query(async () => {
-    const allRows = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(schema.uploadQueue);
-    const statuses = ["draft", "ready", "uploading", "uploaded", "error"] as const;
-    const counts: Record<string, number> = { all: Number(allRows[0]?.count ?? 0) };
-    for (const s of statuses) {
-      const r = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.status, s));
-      counts[s] = Number(r[0]?.count ?? 0);
+    const rows = await db
+      .select({
+        status: schema.uploadQueue.status,
+        count: sql<number>`count(*)`,
+      })
+      .from(schema.uploadQueue)
+      .groupBy(schema.uploadQueue.status);
+
+    const counts: Record<string, number> = { all: 0, draft: 0, ready: 0, uploading: 0, uploaded: 0, error: 0 };
+    for (const row of rows) {
+      counts[row.status] = Number(row.count);
+      counts.all += Number(row.count);
     }
     return counts;
   }),
@@ -190,8 +191,10 @@ const uploadQueueRouter = t.router({
       dimensions: z.string(),
     }))
     .mutation(async ({ input }) => {
-      const allRows = await db.select().from(schema.uploadQueue);
-      const existing = allRows.find((r: any) => r.conceptKey === input.conceptKey);
+      const matchingRows = await db.select().from(schema.uploadQueue)
+        .where(eq(schema.uploadQueue.conceptKey, input.conceptKey))
+        .limit(1);
+      const existing = matchingRows[0];
       if (!existing) throw new Error("Concept not found");
       const generatedAdName = generateAdName({
         handle: existing.handle || "korruscircadian",
@@ -237,9 +240,10 @@ const uploadQueueRouter = t.router({
   bulkDelete: publicProcedure
     .input(z.object({ ids: z.array(z.number()) }))
     .mutation(async ({ input }) => {
-      for (const id of input.ids) {
+      if (input.ids.length > 0) {
         await db.delete(schema.uploadQueue)
-          .where(eq(schema.uploadQueue.id, id));
+          .where(inArray(schema.uploadQueue.id, input.ids));
+        logAudit("bulk_delete", "ad", undefined, { ids: input.ids, count: input.ids.length });
       }
       return { success: true };
     }),
@@ -285,12 +289,85 @@ const uploadQueueRouter = t.router({
         }
       }
 
-      for (const id of input.ids) {
+      if (input.ids.length > 0) {
         await db.update(schema.uploadQueue)
           .set({ status: input.status, updatedAt: sql`now()` })
-          .where(eq(schema.uploadQueue.id, id));
+          .where(inArray(schema.uploadQueue.id, input.ids));
+        logAudit("status_change", "ad", undefined, { ids: input.ids, status: input.status, count: input.ids.length });
       }
       return { success: true, warnings };
+    }),
+
+  // Clone/duplicate a concept group — creates new draft rows with same metadata
+  cloneConcept: publicProcedure
+    .input(z.object({ conceptKey: z.string() }))
+    .mutation(async ({ input }) => {
+      const rows = await db.select().from(schema.uploadQueue)
+        .where(eq(schema.uploadQueue.conceptKey, input.conceptKey));
+      if (rows.length === 0) throw new Error("Concept not found");
+
+      // Generate new variation suffix
+      const primary = rows[0];
+      const existingVariations = await db.select({ variation: schema.uploadQueue.variation })
+        .from(schema.uploadQueue)
+        .where(eq(schema.uploadQueue.initiative, primary.initiative));
+      const usedVariations = new Set(existingVariations.map((r) => r.variation));
+      let newVariation = primary.variation;
+      // Increment variation: V1 → V2, 1A → 1B, etc.
+      const match = newVariation.match(/^(.*)(\d+)([A-Z]?)$/);
+      if (match) {
+        let num = parseInt(match[2], 10);
+        let letter = match[3];
+        for (let i = 0; i < 100; i++) {
+          if (letter) {
+            letter = String.fromCharCode(letter.charCodeAt(0) + 1);
+            if (letter > "Z") { num++; letter = "A"; }
+          } else {
+            num++;
+          }
+          const candidate = `${match[1]}${num}${letter}`;
+          if (!usedVariations.has(candidate)) { newVariation = candidate; break; }
+        }
+      } else {
+        newVariation = newVariation + "-copy";
+      }
+
+      const created: any[] = [];
+      for (const row of rows) {
+        const newConceptKey = [
+          row.brand, row.initiative, newVariation, row.angle,
+          row.source, row.product, row.contentType, row.creativeType,
+          row.copySlug, row.date,
+        ].join("__");
+
+        const newAdName = generateAdName({
+          handle: row.handle || "korruscircadian",
+          brand: row.brand, initiative: row.initiative, variation: newVariation,
+          angle: row.angle, source: row.source, product: row.product,
+          contentType: row.contentType, creativeType: row.creativeType,
+          dimensions: row.dimensions, copySlug: row.copySlug,
+          filename: row.filename, date: row.date,
+        });
+
+        const [cloned] = await db.insert(schema.uploadQueue).values({
+          brand: row.brand, initiative: row.initiative, variation: newVariation,
+          angle: row.angle, source: row.source, product: row.product,
+          contentType: row.contentType, creativeType: row.creativeType,
+          dimensions: row.dimensions, copySlug: row.copySlug,
+          filename: row.filename, date: row.date,
+          adSetId: row.adSetId, adSetName: row.adSetName,
+          destinationUrl: row.destinationUrl, headline: row.headline,
+          bodyCopy: row.bodyCopy, handle: row.handle, cta: row.cta,
+          displayUrl: row.displayUrl, agency: row.agency,
+          pageId: row.pageId, instagramAccountId: row.instagramAccountId,
+          conceptKey: newConceptKey, generatedAdName: newAdName,
+          status: "draft", fileUrl: row.fileUrl, fileKey: row.fileKey,
+          fileMimeType: row.fileMimeType, fileSize: row.fileSize,
+        }).returning();
+        created.push(cloned);
+      }
+      logAudit("clone_concept", "ad", input.conceptKey, { newVariation, clonedCount: created.length });
+      return { success: true, cloned: created.length, newVariation };
     }),
 
   // Reset stuck "uploading" rows back to "ready" (recovery from server crashes)
@@ -795,34 +872,80 @@ const metaSettingsRouter = t.router({
     const settings = settingsRows[0];
     if (!settings?.accessToken || !settings?.adAccountId) return [];
     try {
-      const params = new URLSearchParams({
+      const allAdSets: any[] = [];
+      let url: string | null = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?${new URLSearchParams({
         fields: "id,name,status,campaign{id,name}",
         access_token: settings.accessToken,
         limit: "200",
-      });
-      const url = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?${params.toString()}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        console.error("Meta getAdSets failed:", res.status, errText);
-        return [];
+      }).toString()}`;
+
+      // Paginate through all ad sets
+      while (url) {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          console.error("Meta getAdSets failed:", res.status, errText);
+          break;
+        }
+        const data = await res.json();
+        const items = (data.data || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          status: s.status,
+          campaignId: s.campaign?.id,
+          campaignName: s.campaign?.name,
+        }));
+        allAdSets.push(...items);
+        url = data.paging?.next || null;
       }
-      const data = await res.json();
-      const result = (data.data || []).map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        status: s.status,
-        campaignId: s.campaign?.id,
-        campaignName: s.campaign?.name,
-      }));
-      adSetsCache.data = result;
+
+      adSetsCache.data = allAdSets;
       adSetsCache.fetchedAt = now;
-      return result;
+      return allAdSets;
     } catch (err: any) {
       console.error("Meta getAdSets error:", err?.message || err);
       throw new Error(`Failed to load ad sets from Meta: ${err?.message || "Unknown error"}`);
     }
   }),
+});
+
+// ─── Audit Log ─────────────────────────────────────────────────
+async function logAudit(action: string, entityType: string, entityId?: string, details?: Record<string, any>) {
+  try {
+    await db.insert(schema.auditLog).values({
+      action,
+      entityType,
+      entityId: entityId || null,
+      details: details ? JSON.stringify(details) : null,
+    });
+  } catch (err) {
+    console.error("[audit] Failed to write audit log:", err);
+  }
+}
+
+const auditRouter = t.router({
+  list: publicProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(500).default(100),
+      offset: z.number().min(0).default(0),
+      action: z.string().optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      const limit = input?.limit ?? 100;
+      const offset = input?.offset ?? 0;
+      let query = db.select().from(schema.auditLog)
+        .orderBy(desc(schema.auditLog.createdAt))
+        .limit(limit)
+        .offset(offset);
+      if (input?.action) {
+        query = db.select().from(schema.auditLog)
+          .where(eq(schema.auditLog.action, input.action))
+          .orderBy(desc(schema.auditLog.createdAt))
+          .limit(limit)
+          .offset(offset);
+      }
+      return query;
+    }),
 });
 
 // ─── Root Router ────────────────────────────────────────────────
@@ -833,6 +956,7 @@ export const appRouter = t.router({
   fieldOptions: fieldOptionsRouter,
   meta: metaSettingsRouter,
   handles: handleBankRouter,
+  audit: auditRouter,
 });
 
 export type AppRouter = typeof appRouter;

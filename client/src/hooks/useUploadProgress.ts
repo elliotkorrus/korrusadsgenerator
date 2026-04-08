@@ -37,7 +37,10 @@ export function useUploadProgress(enabled: boolean): UploadProgress[] {
       return;
     }
 
-    const es = new EventSource("/api/upload-progress");
+    // Pass auth token as query param since EventSource can't set custom headers
+    const token = localStorage.getItem("app-token");
+    const url = token ? `/api/upload-progress?token=${encodeURIComponent(token)}` : "/api/upload-progress";
+    const es = new EventSource(url);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {

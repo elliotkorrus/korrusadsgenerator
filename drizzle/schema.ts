@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, index } from "drizzle-orm/pg-core";
 
 const timestamps = {
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -65,7 +65,11 @@ export const uploadQueue = pgTable("upload_queue", {
   pageId: text("page_id"),
   instagramAccountId: text("instagram_account_id"),
   ...timestamps,
-});
+}, (table) => [
+  index("idx_upload_queue_status").on(table.status),
+  index("idx_upload_queue_concept_key").on(table.conceptKey),
+  index("idx_upload_queue_handle").on(table.handle),
+]);
 
 export const metaSettings = pgTable("meta_settings", {
   id: serial("id").primaryKey(),
@@ -94,6 +98,18 @@ export const handleBank = pgTable("handle_bank", {
   ...timestamps,
 });
 
+export const auditLog = pgTable("audit_log", {
+  id: serial("id").primaryKey(),
+  action: text("action").notNull(), // e.g., "upload_to_meta", "status_change", "bulk_delete", "clone"
+  entityType: text("entity_type").notNull(), // e.g., "ad", "copy", "angle", "settings"
+  entityId: text("entity_id"), // ID of the affected entity
+  details: text("details"), // JSON string with additional context
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_audit_log_action").on(table.action),
+  index("idx_audit_log_created_at").on(table.createdAt),
+]);
+
 export const fieldOptions = pgTable("field_options", {
   id: serial("id").primaryKey(),
   field: text("field").notNull(),
@@ -102,4 +118,6 @@ export const fieldOptions = pgTable("field_options", {
   sortOrder: integer("sort_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   ...timestamps,
-});
+}, (table) => [
+  index("idx_field_options_field").on(table.field),
+]);

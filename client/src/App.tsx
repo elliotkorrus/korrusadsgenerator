@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import DashboardLayout from "./components/DashboardLayout";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import Home from "./pages/Home";
 import UploadHistory from "./pages/UploadHistory";
@@ -17,6 +18,7 @@ export default function App() {
   }
 
   return (
+    <ErrorBoundary>
     <ToastProvider>
       <BrowserRouter>
         <DashboardLayout onSignOut={() => { localStorage.removeItem("app-token"); setAuthed(false); }}>
@@ -35,5 +37,6 @@ export default function App() {
         </DashboardLayout>
       </BrowserRouter>
     </ToastProvider>
+    </ErrorBoundary>
   );
 }

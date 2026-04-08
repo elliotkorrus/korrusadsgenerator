@@ -7,7 +7,12 @@ import App from "./App";
 import "./index.css";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 30_000, // 30s — avoid refetching unchanged data on every mount
+    },
+  },
 });
 
 const trpcClient = trpc.createClient({

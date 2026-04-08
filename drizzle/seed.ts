@@ -1,6 +1,6 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { eq } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import * as schema from "./schema.js";
 
 const pool = new pg.Pool({
@@ -28,12 +28,15 @@ async function seed() {
     { angleSlug: "us-vs-them", description: "Compare OIO against competitors or alternatives", example: "Regular LED vs OIO — see the difference", product: "OIO", funnelStage: "MOF", status: "active" },
   ];
 
-  // Clear existing angles and re-seed
-  await db.delete(schema.angleBank);
+  // Upsert angles (idempotent — preserves user-created entries)
   for (const a of angles) {
-    await db.insert(schema.angleBank).values(a);
+    await db.insert(schema.angleBank).values(a)
+      .onConflictDoUpdate({
+        target: schema.angleBank.angleSlug,
+        set: { description: a.description, example: a.example, product: a.product, funnelStage: a.funnelStage, status: a.status },
+      });
   }
-  console.log(`Seeded ${angles.length} angles (cleared old)`);
+  console.log(`Upserted ${angles.length} angles`);
 
   // ── Field Options ───────────────────────────────────────────
   const fieldOptionsSeed: { field: string; value: string; label: string; sortOrder: number }[] = [
@@ -91,12 +94,15 @@ async function seed() {
     { field: "handle", value: "korruscircadian", label: "korruscircadian", sortOrder: 1 },
   ];
 
-  // Clear existing field options and re-seed
-  await db.delete(schema.fieldOptions);
+  // Insert field options only if missing (idempotent — preserves user-created entries)
   for (const o of fieldOptionsSeed) {
-    await db.insert(schema.fieldOptions).values(o);
+    const existing = await db.select().from(schema.fieldOptions)
+      .where(sql`${schema.fieldOptions.field} = ${o.field} AND ${schema.fieldOptions.value} = ${o.value}`);
+    if (existing.length === 0) {
+      await db.insert(schema.fieldOptions).values(o);
+    }
   }
-  console.log(`Seeded ${fieldOptionsSeed.length} field options (cleared old)`);
+  console.log(`Upserted ${fieldOptionsSeed.length} field options`);
 
   // ── Copy Library ────────────────────────────────────────────
   const copySeed = [
@@ -137,30 +143,33 @@ async function seed() {
     },
   ];
 
-  // Clear existing copy and re-seed with C- prefix slugs
-  await db.delete(schema.copyLibrary);
+  // Upsert copy library entries (idempotent — preserves user-created entries)
   for (const c of copySeed) {
-    await db.insert(schema.copyLibrary).values(c);
+    await db.insert(schema.copyLibrary).values(c)
+      .onConflictDoUpdate({
+        target: schema.copyLibrary.copySlug,
+        set: { headline: c.headline, bodyCopy: c.bodyCopy, product: c.product, status: c.status },
+      });
   }
-  console.log(`Seeded ${copySeed.length} copy entries (cleared old)`);
+  console.log(`Upserted ${copySeed.length} copy entries`);
 
   // ── Meta Settings ───────────────────────────────────────────
   const existingMeta = await db.select().from(schema.metaSettings);
   if (existingMeta.length === 0) {
     await db.insert(schema.metaSettings).values({
-      appId: "913800194862952",
-      appSecret: "1c56928d029fb6663b9253d30de31fdb",
-      accessToken: "EAAMZCGLACr2gBRFmUxC5ZAVmJihxcxf0W5hGAJugKxjVLZCnp6Q6yMzbyQJ48zczZACZBFPR0MLYvSUc58TXZBuwE1lWDEpGUHxB99g5VCatIXs5oFZClHGT2eVtWqO0aN74FTvKysS3U2fDRANipNCZAJAedmpM5fsGL24BxC4abVZC8mdWDK82nYjEOxhsH20iBnnQosUCwcfP6ZC0u7E7FU9oL8EpR4sfdWQIkVXyTZCFH7CUeNMX6wBAT1guMi2ZACdU2JIZCXVZBDN5JV5vQAUCoZD",
-      adAccountId: "act_138973865900020",
-      pageId: "223362734194971",
-      instagramUserId: "17841456289857293",
-      instagramHandle: "korruscircadian",
+      appId: process.env.META_APP_ID || "",
+      appSecret: process.env.META_APP_SECRET || "",
+      accessToken: process.env.META_ACCESS_TOKEN || "",
+      adAccountId: process.env.META_AD_ACCOUNT_ID || "",
+      pageId: process.env.META_PAGE_ID || "",
+      instagramUserId: process.env.META_INSTAGRAM_USER_ID || "",
+      instagramHandle: process.env.META_INSTAGRAM_HANDLE || "korruscircadian",
       defaultDestinationUrl: "https://www.korrus.com/collections/store",
       defaultDisplayUrl: "korrus.com",
       defaultCta: "SHOP_NOW",
       utmTemplate: "utm_source=facebook&utm_medium=paidsocial&utm_campaign={{campaign.name}}&utm_content={{ad.name}}&utm_term={{adset.name}}&hsa_acc=138973865900020&hsa_cam={{campaign.id}}&hsa_grp={{adset.id}}&hsa_ad={{ad.id}}&hsa_src=[SITE_SOURCE_NAME]&hsa_net=facebook&hsa_ver=3",
     });
-    console.log("Seeded meta settings");
+    console.log("Seeded meta settings (configure credentials in Meta Settings page)");
   } else {
     console.log("Meta settings already exists");
   }
