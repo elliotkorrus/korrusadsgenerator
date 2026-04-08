@@ -620,8 +620,25 @@ async function uploadConceptGroup(
   const destinationUrl = primary.destinationUrl || meta.defaultDestinationUrl || "";
   const displayUrl = primary.displayUrl || meta.defaultDisplayUrl || "";
   const cta = primary.cta || meta.defaultCta || "SHOP_NOW";
-  const pageId = primary.pageId || meta.pageId || "";
-  const instagramUserId = primary.instagramAccountId || meta.instagramUserId || "";
+
+  // Resolve page ID and Instagram account from handle bank (for whitelisting)
+  let pageId = primary.pageId || "";
+  let instagramUserId = primary.instagramAccountId || "";
+  if (primary.handle) {
+    const handleRows = await db
+      .select()
+      .from(schema.handleBank)
+      .where(eq(schema.handleBank.handle, primary.handle));
+    const handleEntry = handleRows[0];
+    if (handleEntry) {
+      if (!pageId && handleEntry.fbPageId) pageId = handleEntry.fbPageId;
+      if (!instagramUserId && handleEntry.igAccountId) instagramUserId = handleEntry.igAccountId;
+      console.log(`[uploadConceptGroup] Using handle bank for "${primary.handle}": pageId=${pageId}, igId=${instagramUserId}`);
+    }
+  }
+  // Fall back to meta settings defaults
+  if (!pageId) pageId = meta.pageId || "";
+  if (!instagramUserId) instagramUserId = meta.instagramUserId || "";
   const adSetId = primary.adSetId || "";
 
   // Validate required fields
