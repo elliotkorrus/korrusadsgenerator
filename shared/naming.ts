@@ -18,7 +18,7 @@ export interface AdNameFields {
   filename: string;
 }
 
-/** Build the ad name: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Copy__Product__Date */
+/** Build the ad name: Handle__Initiative__Variation__Theme__CreativeStyle__Producer__AdFormat__Copy__Product__Date__Filename */
 export function generateAdName(fields: AdNameFields): string {
   return [
     fields.handle,
@@ -31,6 +31,7 @@ export function generateAdName(fields: AdNameFields): string {
     fields.copySlug,
     fields.product,
     fields.date,
+    fields.filename,      // Original filename appended at end
   ].filter(Boolean).join("__");
 }
 
@@ -49,6 +50,7 @@ export function parseAdName(adName: string): Partial<AdNameFields> {
     copySlug: parts[7] || "",
     product: parts[8] || "",
     date: parts[9] || "",
+    filename: parts[10] || "",
   };
 }
 
