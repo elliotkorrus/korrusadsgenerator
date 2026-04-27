@@ -681,6 +681,11 @@ export default function Home() {
   const [batchEditField, setBatchEditField] = useState<string>(BATCH_EDITABLE_FIELDS[0].key);
   const [batchEditValue, setBatchEditValue] = useState("");
 
+  // Update destination URL on uploaded Meta ads
+  const [showUpdateUrlDialog, setShowUpdateUrlDialog] = useState(false);
+  const [updateUrlValue, setUpdateUrlValue] = useState("");
+  const [updatingUrls, setUpdatingUrls] = useState(false);
+
   // Feature 5: sending state + stub payloads
   const [sendingIds, setSendingIds] = useState<Set<number>>(new Set());
   const [stubPayloads, setStubPayloads] = useState<Record<number, any>>({});
@@ -1333,6 +1338,56 @@ export default function Home() {
     }
   }
 
+  // Update destination URL on already-uploaded Meta ads
+  async function applyUpdateDestinationUrl() {
+    const targetIds = selectedIds.filter((id) => {
+      const item = allItems.find((i) => i.id === id);
+      return item?.status === "uploaded" && item?.metaAdId;
+    });
+    if (targetIds.length === 0) {
+      toast.warning("No uploaded ads selected", "This action only works on ads already in Meta.");
+      return;
+    }
+    const url = updateUrlValue.trim();
+    if (!url) {
+      toast.warning("URL required", "Enter a destination URL.");
+      return;
+    }
+    setUpdatingUrls(true);
+    try {
+      const token = localStorage.getItem("app-token");
+      const res = await fetch("/api/update-destination-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-app-token": token } : {}),
+        },
+        body: JSON.stringify({ adIds: targetIds, destinationUrl: url }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Update failed");
+      }
+      const { total, success, failed } = data.meta || {};
+      if (failed > 0) {
+        toast.warning(
+          `${success}/${total} updated`,
+          `${failed} failed. Check error messages on individual ads.`
+        );
+      } else {
+        toast.success(`${success} ad${success !== 1 ? "s" : ""} updated`, `New destination URL applied in Meta.`);
+      }
+      setShowUpdateUrlDialog(false);
+      setUpdateUrlValue("");
+      // Refresh the queue list to show new URLs
+      utils.queue.list.invalidate();
+    } catch (err: any) {
+      toast.error("Update failed", err.message || String(err));
+    } finally {
+      setUpdatingUrls(false);
+    }
+  }
+
   const COL_COUNT = 21;
 
   // Get select options for currently-selected batch edit field
@@ -1744,6 +1799,16 @@ export default function Home() {
               style={{ background: "rgba(234,179,8,0.1)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)" }}
             >
               ↻ Retry Failed
+            </button>
+          )}
+          {selectedIds.some(id => allItems.find(i => i.id === id)?.status === "uploaded") && (
+            <button
+              onClick={() => { setUpdateUrlValue(""); setShowUpdateUrlDialog(true); }}
+              className="px-2.5 py-1 text-xs rounded-md transition-colors"
+              style={{ background: "rgba(96,167,200,0.1)", color: "#60A7C8", border: "1px solid rgba(96,167,200,0.3)" }}
+              title="Change destination URL on uploaded Meta ads"
+            >
+              🔗 Update URL
             </button>
           )}
           <button
@@ -2695,6 +2760,75 @@ export default function Home() {
 
       {/* Keyboard shortcuts help overlay */}
       <KeyboardShortcutsHelp open={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />
+
+      {/* Update Destination URL dialog */}
+      {showUpdateUrlDialog && (() => {
+        const targetCount = selectedIds.filter((id) => {
+          const item = allItems.find((i) => i.id === id);
+          return item?.status === "uploaded" && item?.metaAdId;
+        }).length;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.6)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+            onClick={() => !updatingUrls && setShowUpdateUrlDialog(false)}
+          >
+            <div
+              className="rounded-md p-5 w-[480px] max-w-[90vw]"
+              style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+                Update Destination URL
+              </h2>
+              <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
+                Will update {targetCount} uploaded ad{targetCount !== 1 ? "s" : ""} in Meta. Creates a new creative
+                with the new URL and reassigns each ad.
+              </p>
+              <label className="text-[10px] font-semibold uppercase block mb-1.5" style={{ color: "var(--text-muted)", letterSpacing: "0.08em" }}>
+                New Destination URL
+              </label>
+              <input
+                type="url"
+                value={updateUrlValue}
+                onChange={(e) => setUpdateUrlValue(e.target.value)}
+                placeholder="https://..."
+                disabled={updatingUrls}
+                className="w-full px-2.5 py-1.5 text-xs rounded focus:outline-none mb-4"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)", color: "var(--text-primary)" }}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !updatingUrls) applyUpdateDestinationUrl();
+                  if (e.key === "Escape" && !updatingUrls) setShowUpdateUrlDialog(false);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowUpdateUrlDialog(false)}
+                  disabled={updatingUrls}
+                  className="px-3 py-1.5 text-xs rounded transition-colors"
+                  style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyUpdateDestinationUrl}
+                  disabled={updatingUrls || !updateUrlValue.trim() || targetCount === 0}
+                  className="px-3 py-1.5 text-xs font-semibold rounded transition-colors"
+                  style={{
+                    background: updatingUrls || !updateUrlValue.trim() ? "#007a9e" : "#0099C6",
+                    color: "white",
+                    opacity: updatingUrls || !updateUrlValue.trim() ? 0.6 : 1,
+                    cursor: updatingUrls ? "wait" : "pointer",
+                  }}
+                >
+                  {updatingUrls ? `Updating ${targetCount}…` : `Update ${targetCount} ad${targetCount !== 1 ? "s" : ""}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Close add-size popovers on outside click */}
       {addSizeOpen && (

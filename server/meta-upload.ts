@@ -881,3 +881,182 @@ export async function uploadAllReady(): Promise<{
 
   return uploadAdsBatch(readyAds.map((a) => a.id));
 }
+
+// ── Update destination URL on already-uploaded Meta ads ──────────────
+//
+// Meta creatives are immutable. To change a destination URL, we must:
+// 1. Fetch the existing creative spec
+// 2. Create a new creative with the same content but updated URL
+// 3. Reassign the ad to use the new creative
+// 4. Update our DB record
+
+interface UpdateUrlResult {
+  adId: number;
+  metaAdId: string;
+  success: boolean;
+  newCreativeId?: string;
+  error?: string;
+}
+
+export async function updateDestinationUrls(
+  adIds: number[],
+  newDestinationUrl: string
+): Promise<{
+  results: UpdateUrlResult[];
+  meta: { total: number; success: number; failed: number };
+}> {
+  if (!newDestinationUrl) throw new Error("New destination URL is required");
+
+  // Load Meta settings
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken || !settings?.adAccountId) {
+    throw new Error("Meta Settings not configured.");
+  }
+  const accessToken = settings.accessToken;
+  const adAccountId = normalizeAdAccountId(settings.adAccountId);
+
+  // Load the ads, only those already uploaded to Meta
+  const ads = await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(inArray(schema.uploadQueue.id, adIds));
+  const uploadedAds = ads.filter((a) => a.metaAdId && a.status === "uploaded");
+
+  const results: UpdateUrlResult[] = [];
+
+  for (const ad of uploadedAds) {
+    try {
+      // Step 1: Fetch the current ad's creative ID
+      const adRes = await fetch(
+        `${META_BASE}/${ad.metaAdId}?fields=creative{id,object_story_spec,asset_feed_spec,name,url_tags}&access_token=${encodeURIComponent(accessToken)}`
+      );
+      const adData = await adRes.json();
+      if (adData.error) throw new Error(`Failed to fetch ad: ${adData.error.message}`);
+      const oldCreative = adData.creative;
+      if (!oldCreative) throw new Error("No creative found on ad");
+
+      // Step 2: Build a new creative spec with the updated URL
+      const newCreativeBody: Record<string, any> = {
+        name: oldCreative.name || ad.generatedAdName || `${ad.id}`,
+        access_token: accessToken,
+      };
+
+      // Determine if it's asset_feed_spec (multi-placement) or object_story_spec (single)
+      if (oldCreative.asset_feed_spec) {
+        const spec = typeof oldCreative.asset_feed_spec === "string"
+          ? JSON.parse(oldCreative.asset_feed_spec)
+          : oldCreative.asset_feed_spec;
+        // Update link_urls to point to new destination
+        if (Array.isArray(spec.link_urls)) {
+          spec.link_urls = spec.link_urls.map((u: any) => ({
+            ...u,
+            website_url: newDestinationUrl,
+          }));
+        }
+        // Pull the minimal object_story_spec from the old creative
+        const minimalStorySpec = typeof oldCreative.object_story_spec === "string"
+          ? JSON.parse(oldCreative.object_story_spec)
+          : (oldCreative.object_story_spec || {});
+        newCreativeBody.object_story_spec = JSON.stringify({
+          page_id: minimalStorySpec.page_id,
+          instagram_user_id: minimalStorySpec.instagram_user_id,
+        });
+        newCreativeBody.asset_feed_spec = JSON.stringify(spec);
+      } else if (oldCreative.object_story_spec) {
+        const spec = typeof oldCreative.object_story_spec === "string"
+          ? JSON.parse(oldCreative.object_story_spec)
+          : oldCreative.object_story_spec;
+        // Update the link in video_data or link_data
+        if (spec.video_data?.call_to_action?.value) {
+          spec.video_data.call_to_action.value.link = newDestinationUrl;
+        }
+        if (spec.link_data) {
+          spec.link_data.link = newDestinationUrl;
+          if (spec.link_data.call_to_action?.value) {
+            spec.link_data.call_to_action.value.link = newDestinationUrl;
+          }
+        }
+        newCreativeBody.object_story_spec = JSON.stringify(spec);
+      } else {
+        throw new Error("Creative has neither asset_feed_spec nor object_story_spec");
+      }
+
+      // Preserve URL tags (UTM) if they were set
+      if (oldCreative.url_tags) {
+        newCreativeBody.url_tags = oldCreative.url_tags;
+      }
+
+      // Step 3: Create the new creative
+      const createRes = await fetch(`${META_BASE}/act_${adAccountId}/adcreatives`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newCreativeBody),
+      });
+      const createData = await createRes.json();
+      if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+      const newCreativeId = createData.id;
+      if (!newCreativeId) throw new Error("No creative ID returned");
+
+      // Step 4: Reassign the ad to use the new creative
+      const updateRes = await fetch(`${META_BASE}/${ad.metaAdId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          creative: { creative_id: newCreativeId },
+          access_token: accessToken,
+        }),
+      });
+      const updateData = await updateRes.json();
+      if (updateData.error) throw new Error(`Update ad failed: ${updateData.error.message}`);
+
+      // Step 5: Update our DB record
+      await db
+        .update(schema.uploadQueue)
+        .set({
+          destinationUrl: newDestinationUrl,
+          metaCreativeId: newCreativeId,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(schema.uploadQueue.id, ad.id));
+
+      // Audit log
+      try {
+        await db.insert(schema.auditLog).values({
+          action: "update_destination_url",
+          entityType: "ad",
+          entityId: ad.metaAdId,
+          details: JSON.stringify({
+            adId: ad.id,
+            oldCreativeId: oldCreative.id,
+            newCreativeId,
+            newDestinationUrl,
+          }),
+        });
+      } catch {}
+
+      results.push({
+        adId: ad.id,
+        metaAdId: ad.metaAdId!,
+        success: true,
+        newCreativeId,
+      });
+    } catch (err: any) {
+      results.push({
+        adId: ad.id,
+        metaAdId: ad.metaAdId || "",
+        success: false,
+        error: err.message || String(err),
+      });
+    }
+  }
+
+  return {
+    results,
+    meta: {
+      total: results.length,
+      success: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    },
+  };
+}

@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -188,6 +188,26 @@ app.use(
   "/api/trpc",
   trpcExpress.createExpressMiddleware({ router: appRouter })
 );
+
+// ─── Update Destination URL on already-uploaded Meta ads ─────────────
+app.post("/api/update-destination-url", express.json(), async (req, res) => {
+  const { adIds, destinationUrl } = req.body as { adIds?: number[]; destinationUrl?: string };
+  if (!Array.isArray(adIds) || adIds.length === 0) {
+    res.status(400).json({ success: false, error: "adIds (array) required" });
+    return;
+  }
+  if (!destinationUrl || typeof destinationUrl !== "string") {
+    res.status(400).json({ success: false, error: "destinationUrl required" });
+    return;
+  }
+  try {
+    const result = await updateDestinationUrls(adIds, destinationUrl);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    logger.error("Update destination URL failed", { error: err.message });
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // ─── Send to Meta (single ad — finds its concept group automatically) ──
 app.post("/api/send-to-meta", express.json(), async (req, res) => {
