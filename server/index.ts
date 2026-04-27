@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -189,7 +189,7 @@ app.use(
   trpcExpress.createExpressMiddleware({ router: appRouter })
 );
 
-// ─── Update Destination URL on already-uploaded Meta ads ─────────────
+// ─── Update Destination URL on already-uploaded Meta ads (legacy) ────
 app.post("/api/update-destination-url", express.json(), async (req, res) => {
   const { adIds, destinationUrl } = req.body as { adIds?: number[]; destinationUrl?: string };
   if (!Array.isArray(adIds) || adIds.length === 0) {
@@ -205,6 +205,34 @@ app.post("/api/update-destination-url", express.json(), async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err: any) {
     logger.error("Update destination URL failed", { error: err.message });
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Update creative fields (URL, CTA, headline, body) on uploaded Meta ads ──
+app.post("/api/update-creative-fields", express.json(), async (req, res) => {
+  const { adIds, updates } = req.body as {
+    adIds?: number[];
+    updates?: { destinationUrl?: string; cta?: string; headline?: string; bodyCopy?: string };
+  };
+  if (!Array.isArray(adIds) || adIds.length === 0) {
+    res.status(400).json({ success: false, error: "adIds (array) required" });
+    return;
+  }
+  if (!updates || typeof updates !== "object") {
+    res.status(400).json({ success: false, error: "updates object required" });
+    return;
+  }
+  const hasAny = !!(updates.destinationUrl || updates.cta || updates.headline || updates.bodyCopy);
+  if (!hasAny) {
+    res.status(400).json({ success: false, error: "At least one field to update is required" });
+    return;
+  }
+  try {
+    const result = await updateCreativeFields(adIds, updates);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    logger.error("Update creative fields failed", { error: err.message });
     res.status(500).json({ success: false, error: err.message });
   }
 });

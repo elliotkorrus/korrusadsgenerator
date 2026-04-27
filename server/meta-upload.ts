@@ -882,15 +882,16 @@ export async function uploadAllReady(): Promise<{
   return uploadAdsBatch(readyAds.map((a) => a.id));
 }
 
-// ── Update destination URL on already-uploaded Meta ads ──────────────
+// ── Update creative fields on already-uploaded Meta ads ──────────────
 //
-// Meta creatives are immutable. To change a destination URL, we must:
+// Meta creatives are immutable. To change destination URL / CTA /
+// headline / body copy we must:
 // 1. Fetch the existing creative spec
-// 2. Create a new creative with the same content but updated URL
+// 2. Create a new creative with the same content but updated fields
 // 3. Reassign the ad to use the new creative
 // 4. Update our DB record
 
-interface UpdateUrlResult {
+interface UpdateCreativeResult {
   adId: number;
   metaAdId: string;
   success: boolean;
@@ -898,14 +899,22 @@ interface UpdateUrlResult {
   error?: string;
 }
 
-export async function updateDestinationUrls(
+export interface CreativeFieldUpdates {
+  destinationUrl?: string;
+  cta?: string;
+  headline?: string;
+  bodyCopy?: string;
+}
+
+export async function updateCreativeFields(
   adIds: number[],
-  newDestinationUrl: string
+  updates: CreativeFieldUpdates
 ): Promise<{
-  results: UpdateUrlResult[];
+  results: UpdateCreativeResult[];
   meta: { total: number; success: number; failed: number };
 }> {
-  if (!newDestinationUrl) throw new Error("New destination URL is required");
+  const hasAny = !!(updates.destinationUrl || updates.cta || updates.headline || updates.bodyCopy);
+  if (!hasAny) throw new Error("At least one field to update is required");
 
   // Load Meta settings
   const metaRows = await db.select().from(schema.metaSettings);
@@ -923,11 +932,11 @@ export async function updateDestinationUrls(
     .where(inArray(schema.uploadQueue.id, adIds));
   const uploadedAds = ads.filter((a) => a.metaAdId && a.status === "uploaded");
 
-  const results: UpdateUrlResult[] = [];
+  const results: UpdateCreativeResult[] = [];
 
   for (const ad of uploadedAds) {
     try {
-      // Step 1: Fetch the current ad's creative ID
+      // Step 1: Fetch the current ad's creative ID + spec
       const adRes = await fetch(
         `${META_BASE}/${ad.metaAdId}?fields=creative{id,object_story_spec,asset_feed_spec,name,url_tags}&access_token=${encodeURIComponent(accessToken)}`
       );
@@ -936,24 +945,33 @@ export async function updateDestinationUrls(
       const oldCreative = adData.creative;
       if (!oldCreative) throw new Error("No creative found on ad");
 
-      // Step 2: Build a new creative spec with the updated URL
       const newCreativeBody: Record<string, any> = {
         name: oldCreative.name || ad.generatedAdName || `${ad.id}`,
         access_token: accessToken,
       };
 
-      // Determine if it's asset_feed_spec (multi-placement) or object_story_spec (single)
+      // Determine spec type: asset_feed_spec (multi-placement) or object_story_spec (single)
       if (oldCreative.asset_feed_spec) {
         const spec = typeof oldCreative.asset_feed_spec === "string"
           ? JSON.parse(oldCreative.asset_feed_spec)
           : oldCreative.asset_feed_spec;
-        // Update link_urls to point to new destination
-        if (Array.isArray(spec.link_urls)) {
+
+        if (updates.destinationUrl && Array.isArray(spec.link_urls)) {
           spec.link_urls = spec.link_urls.map((u: any) => ({
             ...u,
-            website_url: newDestinationUrl,
+            website_url: updates.destinationUrl,
           }));
         }
+        if (updates.cta && Array.isArray(spec.call_to_action_types)) {
+          spec.call_to_action_types = [updates.cta];
+        }
+        if (updates.headline && Array.isArray(spec.titles)) {
+          spec.titles = [{ text: updates.headline }];
+        }
+        if (updates.bodyCopy && Array.isArray(spec.bodies)) {
+          spec.bodies = [{ text: updates.bodyCopy }];
+        }
+
         // Pull the minimal object_story_spec from the old creative
         const minimalStorySpec = typeof oldCreative.object_story_spec === "string"
           ? JSON.parse(oldCreative.object_story_spec)
@@ -967,14 +985,39 @@ export async function updateDestinationUrls(
         const spec = typeof oldCreative.object_story_spec === "string"
           ? JSON.parse(oldCreative.object_story_spec)
           : oldCreative.object_story_spec;
-        // Update the link in video_data or link_data
-        if (spec.video_data?.call_to_action?.value) {
-          spec.video_data.call_to_action.value.link = newDestinationUrl;
+
+        // video_data path (single video)
+        if (spec.video_data) {
+          if (updates.destinationUrl && spec.video_data.call_to_action?.value) {
+            spec.video_data.call_to_action.value.link = updates.destinationUrl;
+          }
+          if (updates.cta && spec.video_data.call_to_action) {
+            spec.video_data.call_to_action.type = updates.cta;
+          }
+          if (updates.headline) {
+            spec.video_data.title = updates.headline;
+          }
+          if (updates.bodyCopy) {
+            spec.video_data.message = updates.bodyCopy;
+            spec.video_data.link_description = updates.bodyCopy;
+          }
         }
+        // link_data path (single image)
         if (spec.link_data) {
-          spec.link_data.link = newDestinationUrl;
-          if (spec.link_data.call_to_action?.value) {
-            spec.link_data.call_to_action.value.link = newDestinationUrl;
+          if (updates.destinationUrl) {
+            spec.link_data.link = updates.destinationUrl;
+            if (spec.link_data.call_to_action?.value) {
+              spec.link_data.call_to_action.value.link = updates.destinationUrl;
+            }
+          }
+          if (updates.cta && spec.link_data.call_to_action) {
+            spec.link_data.call_to_action.type = updates.cta;
+          }
+          if (updates.headline) {
+            spec.link_data.name = updates.headline;
+          }
+          if (updates.bodyCopy) {
+            spec.link_data.message = updates.bodyCopy;
           }
         }
         newCreativeBody.object_story_spec = JSON.stringify(spec);
@@ -1011,26 +1054,31 @@ export async function updateDestinationUrls(
       if (updateData.error) throw new Error(`Update ad failed: ${updateData.error.message}`);
 
       // Step 5: Update our DB record
+      const dbUpdates: Record<string, any> = {
+        metaCreativeId: newCreativeId,
+        updatedAt: sql`now()`,
+      };
+      if (updates.destinationUrl) dbUpdates.destinationUrl = updates.destinationUrl;
+      if (updates.cta) dbUpdates.cta = updates.cta;
+      if (updates.headline) dbUpdates.headline = updates.headline;
+      if (updates.bodyCopy) dbUpdates.bodyCopy = updates.bodyCopy;
+
       await db
         .update(schema.uploadQueue)
-        .set({
-          destinationUrl: newDestinationUrl,
-          metaCreativeId: newCreativeId,
-          updatedAt: sql`now()`,
-        })
+        .set(dbUpdates)
         .where(eq(schema.uploadQueue.id, ad.id));
 
       // Audit log
       try {
         await db.insert(schema.auditLog).values({
-          action: "update_destination_url",
+          action: "update_creative_fields",
           entityType: "ad",
           entityId: ad.metaAdId,
           details: JSON.stringify({
             adId: ad.id,
             oldCreativeId: oldCreative.id,
             newCreativeId,
-            newDestinationUrl,
+            updates,
           }),
         });
       } catch {}
@@ -1059,4 +1107,12 @@ export async function updateDestinationUrls(
       failed: results.filter((r) => !r.success).length,
     },
   };
+}
+
+// Backwards-compatible wrapper kept for existing /api/update-destination-url endpoint
+export async function updateDestinationUrls(
+  adIds: number[],
+  newDestinationUrl: string
+) {
+  return updateCreativeFields(adIds, { destinationUrl: newDestinationUrl });
 }
