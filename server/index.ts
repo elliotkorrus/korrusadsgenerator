@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -298,6 +298,89 @@ app.get("/api/update-creative-fields/status", (_req, res) => {
     active: true,
     ...activeUpdateJob,
     elapsedMs: Date.now() - activeUpdateJob.startedAt,
+  });
+});
+
+// ─── Pause / resume ads in Meta (async with progress polling) ────────
+let activeStatusJob: {
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  errors: Array<{ adId: number; error: string }>;
+  done: boolean;
+  newStatus: "PAUSED" | "ACTIVE";
+  startedAt: number;
+} | null = null;
+
+app.post("/api/set-ad-status", express.json(), async (req, res) => {
+  const { adIds, newStatus } = req.body as {
+    adIds?: number[];
+    newStatus?: "PAUSED" | "ACTIVE";
+  };
+  if (!Array.isArray(adIds) || adIds.length === 0) {
+    res.status(400).json({ success: false, error: "adIds (array) required" });
+    return;
+  }
+  if (newStatus !== "PAUSED" && newStatus !== "ACTIVE") {
+    res.status(400).json({ success: false, error: "newStatus must be PAUSED or ACTIVE" });
+    return;
+  }
+  if (activeStatusJob && !activeStatusJob.done) {
+    res.status(409).json({
+      success: false,
+      error: "A status update job is already running. Wait for it to finish.",
+    });
+    return;
+  }
+
+  activeStatusJob = {
+    total: adIds.length,
+    completed: 0,
+    success: 0,
+    failed: 0,
+    errors: [],
+    done: false,
+    newStatus,
+    startedAt: Date.now(),
+  };
+
+  res.json({ success: true, message: "Status update started", total: adIds.length });
+
+  (async () => {
+    try {
+      const CHUNK = 10;
+      for (let i = 0; i < adIds.length; i += CHUNK) {
+        const slice = adIds.slice(i, i + CHUNK);
+        const result = await setAdStatusInMeta(slice, newStatus);
+        activeStatusJob!.completed += slice.length;
+        activeStatusJob!.success += result.meta.success;
+        activeStatusJob!.failed += result.meta.failed;
+        for (const r of result.results) {
+          if (!r.success && r.error) {
+            activeStatusJob!.errors.push({ adId: r.adId, error: r.error });
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.error("Background set-ad-status failed", { error: err.message });
+      activeStatusJob!.errors.push({ adId: 0, error: err.message });
+      activeStatusJob!.failed = activeStatusJob!.total - activeStatusJob!.success;
+    } finally {
+      activeStatusJob!.done = true;
+    }
+  })();
+});
+
+app.get("/api/set-ad-status/status", (_req, res) => {
+  if (!activeStatusJob) {
+    res.json({ active: false });
+    return;
+  }
+  res.json({
+    active: true,
+    ...activeStatusJob,
+    elapsedMs: Date.now() - activeStatusJob.startedAt,
   });
 });
 

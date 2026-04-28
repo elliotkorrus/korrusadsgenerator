@@ -1355,6 +1355,71 @@ export default function Home() {
     failed: number;
   } | null>(null);
 
+  // Pause / resume state
+  const [pausingAds, setPausingAds] = useState<null | "PAUSED" | "ACTIVE">(null);
+  const [pauseProgress, setPauseProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  async function applySetAdStatus(newStatus: "PAUSED" | "ACTIVE") {
+    const targetIds = selectedIds.filter((id) => {
+      const item = allItems.find((i) => i.id === id);
+      return item?.status === "uploaded" && item?.metaAdId;
+    });
+    if (targetIds.length === 0) {
+      toast.warning("No uploaded ads selected", "This action only works on ads already in Meta.");
+      return;
+    }
+    const verb = newStatus === "PAUSED" ? "pause" : "resume";
+    const verbing = newStatus === "PAUSED" ? "Pausing" : "Resuming";
+    if (!confirm(`${verb === "pause" ? "Pause" : "Resume"} ${targetIds.length} ad${targetIds.length !== 1 ? "s" : ""} in Meta?`)) return;
+
+    setPausingAds(newStatus);
+    setPauseProgress({ completed: 0, total: targetIds.length });
+    const token = localStorage.getItem("app-token");
+    const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
+
+    try {
+      const res = await fetch("/api/set-ad-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ adIds: targetIds, newStatus }),
+      });
+      const startData = await res.json();
+      if (!res.ok || !startData.success) throw new Error(startData.error || "Failed to start");
+
+      let finalSuccess = 0;
+      let finalFailed = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const statusRes = await fetch("/api/set-ad-status/status", { headers: authHeaders });
+        if (!statusRes.ok) throw new Error("Lost connection to server");
+        const status = await statusRes.json();
+        if (!status.active) break;
+        setPauseProgress({
+          completed: status.completed || 0,
+          total: status.total || targetIds.length,
+        });
+        if (status.done) {
+          finalSuccess = status.success || 0;
+          finalFailed = status.failed || 0;
+          break;
+        }
+      }
+      if (finalFailed > 0) {
+        toast.warning(
+          `${finalSuccess}/${finalSuccess + finalFailed} ${verb}d`,
+          `${finalFailed} failed.`
+        );
+      } else {
+        toast.success(`${finalSuccess} ad${finalSuccess !== 1 ? "s" : ""} ${verb}d`, `Status updated in Meta.`);
+      }
+    } catch (err: any) {
+      toast.error(`${verbing} failed`, err.message || String(err));
+    } finally {
+      setPausingAds(null);
+      setPauseProgress(null);
+    }
+  }
+
   // Update creative fields on already-uploaded Meta ads (async with polling)
   async function applyUpdateDestinationUrl() {
     const targetIds = selectedIds.filter((id) => {
@@ -1880,6 +1945,32 @@ export default function Home() {
             >
               ✎ Edit Live Ads
             </button>
+          )}
+          {selectedIds.some(id => allItems.find(i => i.id === id)?.status === "uploaded") && (
+            <>
+              <button
+                onClick={() => applySetAdStatus("PAUSED")}
+                disabled={pausingAds !== null}
+                className="px-2.5 py-1 text-xs rounded-md transition-colors"
+                style={{ background: "rgba(234,179,8,0.1)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)", opacity: pausingAds !== null ? 0.6 : 1 }}
+                title="Pause selected ads in Meta"
+              >
+                {pausingAds === "PAUSED" && pauseProgress
+                  ? `⏸ ${pauseProgress.completed}/${pauseProgress.total}…`
+                  : "⏸ Pause"}
+              </button>
+              <button
+                onClick={() => applySetAdStatus("ACTIVE")}
+                disabled={pausingAds !== null}
+                className="px-2.5 py-1 text-xs rounded-md transition-colors"
+                style={{ background: "rgba(74,222,128,0.1)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", opacity: pausingAds !== null ? 0.6 : 1 }}
+                title="Resume selected ads in Meta"
+              >
+                {pausingAds === "ACTIVE" && pauseProgress
+                  ? `▶ ${pauseProgress.completed}/${pauseProgress.total}…`
+                  : "▶ Resume"}
+              </button>
+            </>
           )}
           <button
             onClick={() => confirmDelete(selectedIds, `${selectedKeys.size} concept${selectedKeys.size !== 1 ? "s" : ""}`)}

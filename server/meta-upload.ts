@@ -1116,3 +1116,76 @@ export async function updateDestinationUrls(
 ) {
   return updateCreativeFields(adIds, { destinationUrl: newDestinationUrl });
 }
+
+// ── Pause / resume ads in Meta ──────────────────────────────────────
+//
+// Sets each ad's status to PAUSED or ACTIVE via the Meta API.
+// Acts only on ads with status="uploaded" in our DB.
+
+interface SetAdStatusResult {
+  adId: number;
+  metaAdId: string;
+  success: boolean;
+  error?: string;
+}
+
+export async function setAdStatusInMeta(
+  adIds: number[],
+  newStatus: "PAUSED" | "ACTIVE"
+): Promise<{
+  results: SetAdStatusResult[];
+  meta: { total: number; success: number; failed: number };
+}> {
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken) throw new Error("Meta Settings not configured.");
+  const accessToken = settings.accessToken;
+
+  const ads = await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(inArray(schema.uploadQueue.id, adIds));
+  const uploadedAds = ads.filter((a) => a.metaAdId && a.status === "uploaded");
+
+  const results: SetAdStatusResult[] = [];
+
+  for (const ad of uploadedAds) {
+    try {
+      const res = await fetch(`${META_BASE}/${ad.metaAdId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, access_token: accessToken }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "Meta API error");
+
+      // Audit log
+      try {
+        await db.insert(schema.auditLog).values({
+          action: newStatus === "PAUSED" ? "pause_ad" : "resume_ad",
+          entityType: "ad",
+          entityId: ad.metaAdId,
+          details: JSON.stringify({ adId: ad.id, newStatus }),
+        });
+      } catch {}
+
+      results.push({ adId: ad.id, metaAdId: ad.metaAdId!, success: true });
+    } catch (err: any) {
+      results.push({
+        adId: ad.id,
+        metaAdId: ad.metaAdId || "",
+        success: false,
+        error: err.message || String(err),
+      });
+    }
+  }
+
+  return {
+    results,
+    meta: {
+      total: results.length,
+      success: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    },
+  };
+}
