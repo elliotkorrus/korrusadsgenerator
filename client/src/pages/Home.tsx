@@ -1347,7 +1347,15 @@ export default function Home() {
     }
   }
 
-  // Update creative fields on already-uploaded Meta ads
+  // Track progress on the long-running update job
+  const [updateProgress, setUpdateProgress] = useState<{
+    completed: number;
+    total: number;
+    success: number;
+    failed: number;
+  } | null>(null);
+
+  // Update creative fields on already-uploaded Meta ads (async with polling)
   async function applyUpdateDestinationUrl() {
     const targetIds = selectedIds.filter((id) => {
       const item = allItems.find((i) => i.id === id);
@@ -1357,7 +1365,6 @@ export default function Home() {
       toast.warning("No uploaded ads selected", "This action only works on ads already in Meta.");
       return;
     }
-    // Build the updates payload from enabled fields
     const updates: Record<string, string> = {};
     if (updateFieldsEnabled.destinationUrl && updateUrlValue.trim()) {
       updates.destinationUrl = updateUrlValue.trim();
@@ -1375,31 +1382,58 @@ export default function Home() {
       toast.warning("Nothing to update", "Enable at least one field and provide a value.");
       return;
     }
+
     setUpdatingUrls(true);
+    setUpdateProgress({ completed: 0, total: targetIds.length, success: 0, failed: 0 });
+
+    const token = localStorage.getItem("app-token");
+    const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
+
     try {
-      const token = localStorage.getItem("app-token");
+      // Kick off the job (returns immediately)
       const res = await fetch("/api/update-creative-fields", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "x-app-token": token } : {}),
-        },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ adIds: targetIds, updates }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Update failed");
+      const startData = await res.json();
+      if (!res.ok || !startData.success) {
+        throw new Error(startData.error || "Failed to start update");
       }
-      const { total, success, failed } = data.meta || {};
+
+      // Poll for status until done
       const fieldList = Object.keys(updates).join(", ");
-      if (failed > 0) {
+      let finalSuccess = 0;
+      let finalFailed = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const statusRes = await fetch("/api/update-creative-fields/status", { headers: authHeaders });
+        if (!statusRes.ok) {
+          throw new Error("Lost connection to server");
+        }
+        const status = await statusRes.json();
+        if (!status.active) break;
+        setUpdateProgress({
+          completed: status.completed || 0,
+          total: status.total || targetIds.length,
+          success: status.success || 0,
+          failed: status.failed || 0,
+        });
+        if (status.done) {
+          finalSuccess = status.success || 0;
+          finalFailed = status.failed || 0;
+          break;
+        }
+      }
+
+      if (finalFailed > 0) {
         toast.warning(
-          `${success}/${total} updated`,
-          `${failed} failed. Check error messages on individual ads.`
+          `${finalSuccess}/${finalSuccess + finalFailed} updated`,
+          `${finalFailed} failed. Check error messages on individual ads.`
         );
       } else {
         toast.success(
-          `${success} ad${success !== 1 ? "s" : ""} updated`,
+          `${finalSuccess} ad${finalSuccess !== 1 ? "s" : ""} updated`,
           `Updated ${fieldList} in Meta.`
         );
       }
@@ -1413,6 +1447,7 @@ export default function Home() {
       toast.error("Update failed", err.message || String(err));
     } finally {
       setUpdatingUrls(false);
+      setUpdateProgress(null);
     }
   }
 
@@ -2954,8 +2989,10 @@ export default function Home() {
                     cursor: updatingUrls ? "wait" : "pointer",
                   }}
                 >
-                  {updatingUrls
-                    ? `Updating ${targetCount}…`
+                  {updatingUrls && updateProgress
+                    ? `Updating ${updateProgress.completed}/${updateProgress.total}…`
+                    : updatingUrls
+                    ? `Starting…`
                     : `Update ${targetCount} ad${targetCount !== 1 ? "s" : ""}`}
                 </button>
               </div>

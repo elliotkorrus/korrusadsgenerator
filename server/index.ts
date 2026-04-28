@@ -210,6 +210,18 @@ app.post("/api/update-destination-url", express.json(), async (req, res) => {
 });
 
 // ─── Update creative fields (URL, CTA, headline, body) on uploaded Meta ads ──
+// Long-running operation: kicks off in background, returns immediately.
+// Client polls /api/update-creative-fields/status for progress.
+let activeUpdateJob: {
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  errors: Array<{ adId: number; error: string }>;
+  done: boolean;
+  startedAt: number;
+} | null = null;
+
 app.post("/api/update-creative-fields", express.json(), async (req, res) => {
   const { adIds, updates } = req.body as {
     adIds?: number[];
@@ -228,13 +240,65 @@ app.post("/api/update-creative-fields", express.json(), async (req, res) => {
     res.status(400).json({ success: false, error: "At least one field to update is required" });
     return;
   }
-  try {
-    const result = await updateCreativeFields(adIds, updates);
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    logger.error("Update creative fields failed", { error: err.message });
-    res.status(500).json({ success: false, error: err.message });
+  if (activeUpdateJob && !activeUpdateJob.done) {
+    res.status(409).json({
+      success: false,
+      error: "An update job is already running. Wait for it to finish.",
+    });
+    return;
   }
+
+  // Initialize job tracker
+  activeUpdateJob = {
+    total: adIds.length,
+    completed: 0,
+    success: 0,
+    failed: 0,
+    errors: [],
+    done: false,
+    startedAt: Date.now(),
+  };
+
+  // Respond immediately
+  res.json({ success: true, message: "Update started", total: adIds.length });
+
+  // Run in background
+  (async () => {
+    try {
+      // Process in chunks of 5 to balance throughput vs progress reporting
+      const CHUNK = 5;
+      for (let i = 0; i < adIds.length; i += CHUNK) {
+        const slice = adIds.slice(i, i + CHUNK);
+        const result = await updateCreativeFields(slice, updates);
+        activeUpdateJob!.completed += slice.length;
+        activeUpdateJob!.success += result.meta.success;
+        activeUpdateJob!.failed += result.meta.failed;
+        for (const r of result.results) {
+          if (!r.success && r.error) {
+            activeUpdateJob!.errors.push({ adId: r.adId, error: r.error });
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.error("Background update creative fields failed", { error: err.message });
+      activeUpdateJob!.errors.push({ adId: 0, error: err.message });
+      activeUpdateJob!.failed = activeUpdateJob!.total - activeUpdateJob!.success;
+    } finally {
+      activeUpdateJob!.done = true;
+    }
+  })();
+});
+
+app.get("/api/update-creative-fields/status", (_req, res) => {
+  if (!activeUpdateJob) {
+    res.json({ active: false });
+    return;
+  }
+  res.json({
+    active: true,
+    ...activeUpdateJob,
+    elapsedMs: Date.now() - activeUpdateJob.startedAt,
+  });
 });
 
 // ─── Send to Meta (single ad — finds its concept group automatically) ──
