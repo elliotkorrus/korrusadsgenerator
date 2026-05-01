@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -382,6 +382,40 @@ app.get("/api/set-ad-status/status", (_req, res) => {
     ...activeStatusJob,
     elapsedMs: Date.now() - activeStatusJob.startedAt,
   });
+});
+
+// ─── Add a new size/asset to a live Meta ad (one concept) ───────────
+app.post("/api/add-ad-assets", express.json(), async (req, res) => {
+  const { conceptKey, additions } = req.body as {
+    conceptKey?: string;
+    additions?: Array<{
+      dimensions: string;
+      contentType: "VID" | "IMG";
+      fileUrl: string;
+      fileKey: string;
+      fileMimeType: string;
+      fileSize: number;
+    }>;
+  };
+  if (!conceptKey || typeof conceptKey !== "string") {
+    res.status(400).json({ success: false, error: "conceptKey required" });
+    return;
+  }
+  if (!Array.isArray(additions) || additions.length === 0) {
+    res.status(400).json({ success: false, error: "additions (non-empty array) required" });
+    return;
+  }
+  try {
+    const result = await addAdAssets(conceptKey, additions);
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (err: any) {
+    logger.error("Add ad assets failed", { error: err.message });
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ─── Replace creative assets on a live Meta ad (one concept at a time) ──

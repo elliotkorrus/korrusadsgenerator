@@ -13,6 +13,7 @@
 import { db, schema } from "./db.js";
 import { eq, inArray, sql } from "drizzle-orm";
 import { EventEmitter } from "events";
+import { generateAdName } from "../shared/naming.js";
 
 const META_API_VERSION = "v21.0";
 const META_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -1356,6 +1357,352 @@ export async function replaceAdAssets(
       metaAdId: primary.metaAdId,
       success: true,
       newCreativeId,
+    };
+  } catch (err: any) {
+    return {
+      conceptKey,
+      metaAdId: primary.metaAdId || "",
+      success: false,
+      error: err.message || String(err),
+    };
+  }
+}
+
+// ── Add new asset (dimension) to a live Meta ad ─────────────────────
+//
+// When a live ad has only some dimensions (e.g. 9:16 only), this lets
+// you add another size (e.g. 4:5) to the same ad without replacing
+// existing assets. If the existing creative was single-placement
+// (object_story_spec), it gets converted to multi-placement
+// (asset_feed_spec). New rows are inserted in the DB for each added
+// dimension.
+
+interface AssetAddition {
+  dimensions: string;
+  contentType: "VID" | "IMG";
+  fileUrl: string;
+  fileKey: string;
+  fileMimeType: string;
+  fileSize: number;
+}
+
+interface AddAssetsResult {
+  conceptKey: string;
+  metaAdId: string;
+  success: boolean;
+  newCreativeId?: string;
+  newRowIds?: number[];
+  error?: string;
+}
+
+export async function addAdAssets(
+  conceptKey: string,
+  additions: AssetAddition[]
+): Promise<AddAssetsResult> {
+  if (!additions.length) throw new Error("No additions provided");
+
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken || !settings?.adAccountId) {
+    throw new Error("Meta Settings not configured.");
+  }
+  const accessToken = settings.accessToken;
+  const adAccountId = normalizeAdAccountId(settings.adAccountId);
+
+  // Load existing rows in the concept group
+  const allRows = await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(eq(schema.uploadQueue.conceptKey, conceptKey));
+  if (allRows.length === 0) throw new Error(`Concept ${conceptKey} not found`);
+  const primary = allRows[0];
+  if (!primary.metaAdId) throw new Error("Concept has not been uploaded to Meta yet");
+
+  // Reject duplicates (same dimension already exists in concept)
+  const existingDims = new Set(allRows.map((r) => r.dimensions));
+  for (const a of additions) {
+    if (existingDims.has(a.dimensions)) {
+      throw new Error(`Dimension ${a.dimensions} already exists on this concept. Use Replace instead.`);
+    }
+  }
+
+  try {
+    // Step 1: Fetch existing creative spec
+    const adRes = await fetch(
+      `${META_BASE}/${primary.metaAdId}?fields=creative{id,object_story_spec,asset_feed_spec,name,url_tags}&access_token=${encodeURIComponent(accessToken)}`
+    );
+    const adData = await adRes.json();
+    if (adData.error) throw new Error(`Failed to fetch ad: ${adData.error.message}`);
+    const oldCreative = adData.creative;
+    if (!oldCreative) throw new Error("No creative found on ad");
+
+    // Step 2: Upload new asset files to Meta
+    const newAssets: Array<{ id: string; type: "video" | "image"; placement: "feed" | "story"; dimensions: string }> = [];
+    for (const addition of additions) {
+      const { buffer, mimeType } = await fetchFileBuffer(addition.fileUrl);
+      const baseName = primary.filename || `${primary.id}_${addition.dimensions}`;
+
+      if (isVideo(mimeType, addition.fileUrl) || addition.contentType === "VID") {
+        const videoFilename = /\.\w{2,4}$/.test(baseName) ? baseName : `${baseName}.mp4`;
+        const videoId = await uploadVideoToMeta(adAccountId, accessToken, buffer, videoFilename);
+        newAssets.push({ id: videoId, type: "video", placement: placementType(addition.dimensions), dimensions: addition.dimensions });
+      } else {
+        const imgFilename = /\.\w{2,4}$/.test(baseName) ? baseName : `${baseName}.png`;
+        const hash = await uploadImageToMeta(adAccountId, accessToken, buffer, imgFilename, mimeType);
+        newAssets.push({ id: hash, type: "image", placement: placementType(addition.dimensions), dimensions: addition.dimensions });
+      }
+    }
+
+    // Step 3: Build new creative body
+    const newCreativeBody: Record<string, any> = {
+      name: oldCreative.name || primary.generatedAdName || `${primary.id}`,
+      access_token: accessToken,
+    };
+
+    if (oldCreative.asset_feed_spec) {
+      // Already multi-placement — append to videos/images
+      const spec = typeof oldCreative.asset_feed_spec === "string"
+        ? JSON.parse(oldCreative.asset_feed_spec)
+        : oldCreative.asset_feed_spec;
+
+      for (const a of newAssets) {
+        const adlabelName = a.placement === "feed" ? "feed_label" : "story_label";
+        if (a.type === "video") {
+          if (!Array.isArray(spec.videos)) spec.videos = [];
+          spec.videos.push({ video_id: a.id, adlabels: [{ name: adlabelName }] });
+        } else {
+          if (!Array.isArray(spec.images)) spec.images = [];
+          spec.images.push({ hash: a.id, adlabels: [{ name: adlabelName }] });
+        }
+      }
+
+      const minimalStorySpec = typeof oldCreative.object_story_spec === "string"
+        ? JSON.parse(oldCreative.object_story_spec)
+        : (oldCreative.object_story_spec || {});
+      newCreativeBody.object_story_spec = JSON.stringify({
+        page_id: minimalStorySpec.page_id,
+        instagram_user_id: minimalStorySpec.instagram_user_id,
+      });
+      newCreativeBody.asset_feed_spec = JSON.stringify(spec);
+    } else if (oldCreative.object_story_spec) {
+      // Convert from single-placement to multi-placement
+      const oldSpec = typeof oldCreative.object_story_spec === "string"
+        ? JSON.parse(oldCreative.object_story_spec)
+        : oldCreative.object_story_spec;
+
+      // Extract original asset id and placement
+      const existingRow = allRows[0];
+      const existingPlacement = placementType(existingRow.dimensions);
+      let existingAssetId: string | undefined;
+      let existingType: "video" | "image" | undefined;
+      let bodyCopy = "";
+      let headline = "";
+      let displayUrl = "";
+      let destinationUrl = "";
+      let cta = "SHOP_NOW";
+
+      if (oldSpec.video_data) {
+        existingAssetId = oldSpec.video_data.video_id;
+        existingType = "video";
+        bodyCopy = oldSpec.video_data.message || oldSpec.video_data.link_description || "";
+        headline = oldSpec.video_data.title || "";
+        cta = oldSpec.video_data.call_to_action?.type || cta;
+        destinationUrl = oldSpec.video_data.call_to_action?.value?.link || "";
+      } else if (oldSpec.link_data) {
+        existingAssetId = oldSpec.link_data.image_hash;
+        existingType = "image";
+        bodyCopy = oldSpec.link_data.message || "";
+        headline = oldSpec.link_data.name || "";
+        displayUrl = oldSpec.link_data.caption || "";
+        destinationUrl = oldSpec.link_data.link || "";
+        cta = oldSpec.link_data.call_to_action?.type || cta;
+      } else {
+        throw new Error("Existing creative has neither video_data nor link_data");
+      }
+      if (!existingAssetId) throw new Error("Could not extract existing asset ID from creative");
+
+      // Mixing types (video + image) requires more complex spec - reject for now
+      const hasVideoNew = newAssets.some((a) => a.type === "video");
+      const hasImageNew = newAssets.some((a) => a.type === "image");
+      if (existingType === "video" && hasImageNew) {
+        throw new Error("Cannot mix video and image assets in one ad. Existing is video, you added an image.");
+      }
+      if (existingType === "image" && hasVideoNew) {
+        throw new Error("Cannot mix video and image assets in one ad. Existing is image, you added a video.");
+      }
+
+      // Use destinationUrl from primary if not in spec
+      const effectiveDestUrl = destinationUrl || primary.destinationUrl || settings.defaultDestinationUrl || "";
+
+      const isVid = existingType === "video";
+      const assetFeedSpec: Record<string, any> = {
+        optimization_type: "PLACEMENT",
+        bodies: [{ text: bodyCopy }],
+        titles: [{ text: headline }],
+        descriptions: [{ text: displayUrl }],
+        link_urls: [{ website_url: effectiveDestUrl, display_url: displayUrl }],
+        call_to_action_types: [cta],
+        ad_formats: [isVid ? "SINGLE_VIDEO" : "SINGLE_IMAGE"],
+        asset_customization_rules: [
+          {
+            customization_spec: {
+              publisher_platforms: ["facebook", "instagram"],
+              facebook_positions: ["feed", "marketplace", "video_feeds", "search"],
+              instagram_positions: ["stream", "explore", "explore_home", "profile_feed", "ig_search"],
+            },
+            ...(isVid ? { video_label: { name: "feed_label" } } : { image_label: { name: "feed_label" } }),
+          },
+          {
+            customization_spec: {
+              publisher_platforms: ["facebook", "instagram"],
+              facebook_positions: ["story"],
+              instagram_positions: ["story"],
+            },
+            ...(isVid ? { video_label: { name: "story_label" } } : { image_label: { name: "story_label" } }),
+          },
+        ],
+      };
+
+      // Build the assets list: existing + new, each labeled
+      const allAssets: Array<{ id: string; placement: "feed" | "story" }> = [
+        { id: existingAssetId, placement: existingPlacement },
+        ...newAssets.map((a) => ({ id: a.id, placement: a.placement })),
+      ];
+
+      if (isVid) {
+        assetFeedSpec.videos = allAssets.map((a) => ({
+          video_id: a.id,
+          adlabels: [{ name: a.placement === "feed" ? "feed_label" : "story_label" }],
+        }));
+      } else {
+        assetFeedSpec.images = allAssets.map((a) => ({
+          hash: a.id,
+          adlabels: [{ name: a.placement === "feed" ? "feed_label" : "story_label" }],
+        }));
+      }
+
+      newCreativeBody.object_story_spec = JSON.stringify({
+        page_id: oldSpec.page_id,
+        instagram_user_id: oldSpec.instagram_user_id,
+      });
+      newCreativeBody.asset_feed_spec = JSON.stringify(assetFeedSpec);
+    } else {
+      throw new Error("Creative has neither asset_feed_spec nor object_story_spec");
+    }
+
+    if (oldCreative.url_tags) newCreativeBody.url_tags = oldCreative.url_tags;
+
+    // Step 4: Create the new creative
+    const createRes = await fetch(`${META_BASE}/act_${adAccountId}/adcreatives`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newCreativeBody),
+    });
+    const createData = await createRes.json();
+    if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+    const newCreativeId = createData.id;
+    if (!newCreativeId) throw new Error("No creative ID returned");
+
+    // Step 5: Reassign the ad
+    const updateRes = await fetch(`${META_BASE}/${primary.metaAdId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creative: { creative_id: newCreativeId },
+        access_token: accessToken,
+      }),
+    });
+    const updateData = await updateRes.json();
+    if (updateData.error) throw new Error(`Update ad failed: ${updateData.error.message}`);
+
+    // Step 6: Insert new DB rows for the added dimensions
+    const newRowIds: number[] = [];
+    for (let i = 0; i < additions.length; i++) {
+      const addition = additions[i];
+      const generatedAdName = generateAdName({
+        handle: primary.handle || "korruscircadian",
+        brand: primary.brand,
+        initiative: primary.initiative,
+        variation: primary.variation,
+        angle: primary.angle,
+        source: primary.source,
+        product: primary.product,
+        contentType: primary.contentType,
+        creativeType: primary.creativeType,
+        dimensions: addition.dimensions,
+        copySlug: primary.copySlug,
+        filename: primary.filename,
+        date: primary.date,
+      });
+
+      const inserted = await db.insert(schema.uploadQueue).values({
+        brand: primary.brand,
+        initiative: primary.initiative,
+        variation: primary.variation,
+        angle: primary.angle,
+        source: primary.source,
+        product: primary.product,
+        contentType: primary.contentType,
+        creativeType: primary.creativeType,
+        dimensions: addition.dimensions,
+        copySlug: primary.copySlug,
+        filename: primary.filename,
+        date: primary.date,
+        adSetId: primary.adSetId,
+        adSetName: primary.adSetName,
+        destinationUrl: primary.destinationUrl,
+        headline: primary.headline,
+        bodyCopy: primary.bodyCopy,
+        agency: primary.agency,
+        handle: primary.handle,
+        cta: primary.cta,
+        displayUrl: primary.displayUrl,
+        pageId: primary.pageId,
+        instagramAccountId: primary.instagramAccountId,
+        conceptKey,
+        generatedAdName,
+        status: "uploaded",
+        metaAdId: primary.metaAdId,
+        metaCreativeId: newCreativeId,
+        errorMessage: null,
+        uploadedAt: primary.uploadedAt,
+        fileUrl: addition.fileUrl,
+        fileKey: addition.fileKey,
+        fileMimeType: addition.fileMimeType,
+        fileSize: addition.fileSize,
+      }).returning();
+      if (inserted[0]) newRowIds.push(inserted[0].id);
+    }
+
+    // Update existing rows' metaCreativeId to point to the new creative
+    const existingIds = allRows.map((r) => r.id);
+    await db
+      .update(schema.uploadQueue)
+      .set({ metaCreativeId: newCreativeId, updatedAt: sql`now()` })
+      .where(inArray(schema.uploadQueue.id, existingIds));
+
+    // Audit log
+    try {
+      await db.insert(schema.auditLog).values({
+        action: "add_ad_assets",
+        entityType: "ad",
+        entityId: primary.metaAdId,
+        details: JSON.stringify({
+          conceptKey,
+          oldCreativeId: oldCreative.id,
+          newCreativeId,
+          addedDimensions: additions.map((a) => a.dimensions),
+          newRowIds,
+        }),
+      });
+    } catch {}
+
+    return {
+      conceptKey,
+      metaAdId: primary.metaAdId,
+      success: true,
+      newCreativeId,
+      newRowIds,
     };
   } catch (err: any) {
     return {
