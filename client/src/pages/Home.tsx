@@ -1359,6 +1359,91 @@ export default function Home() {
   const [pausingAds, setPausingAds] = useState<null | "PAUSED" | "ACTIVE">(null);
   const [pauseProgress, setPauseProgress] = useState<{ completed: number; total: number } | null>(null);
 
+  // Asset replacement state
+  const [showReplaceAssetsDialog, setShowReplaceAssetsDialog] = useState(false);
+  const [replaceAssetsConceptKey, setReplaceAssetsConceptKey] = useState<string | null>(null);
+  const [replaceAssetsFiles, setReplaceAssetsFiles] = useState<Record<number, File | null>>({});
+  const [replaceAssetsBusy, setReplaceAssetsBusy] = useState(false);
+
+  function openReplaceAssetsDialog(conceptKey: string) {
+    setReplaceAssetsConceptKey(conceptKey);
+    setReplaceAssetsFiles({});
+    setShowReplaceAssetsDialog(true);
+  }
+
+  async function applyReplaceAssets() {
+    if (!replaceAssetsConceptKey) return;
+    const group = grouped.find((g) => g.key === replaceAssetsConceptKey);
+    if (!group) {
+      toast.error("Concept not found", "Could not locate the concept group.");
+      return;
+    }
+    const filesToReplace = Object.entries(replaceAssetsFiles)
+      .filter(([, f]) => f !== null)
+      .map(([rowId, f]) => ({ rowId: Number(rowId), file: f as File }));
+    if (filesToReplace.length === 0) {
+      toast.warning("No files selected", "Drop a new file on at least one row.");
+      return;
+    }
+    if (!confirm(`Replace ${filesToReplace.length} asset${filesToReplace.length !== 1 ? "s" : ""}? This creates a new creative in Meta and may reset learning.`)) return;
+
+    setReplaceAssetsBusy(true);
+    const token = localStorage.getItem("app-token");
+    try {
+      // Step 1: upload each new file to R2
+      const replacements: Array<{
+        rowId: number;
+        fileUrl: string;
+        fileKey: string;
+        fileMimeType: string;
+        fileSize: number;
+      }> = [];
+      for (const { rowId, file } of filesToReplace) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const r = await fetch("/api/upload", {
+          method: "POST",
+          body: fd,
+          headers: token ? { "x-app-token": token } : {},
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "R2 upload failed");
+        replacements.push({
+          rowId,
+          fileUrl: d.fileUrl,
+          fileKey: d.fileKey,
+          fileMimeType: d.fileMimeType,
+          fileSize: d.fileSize,
+        });
+      }
+
+      // Step 2: call the replace endpoint
+      const res = await fetch("/api/replace-ad-assets", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-app-token": token } : {}),
+        },
+        body: JSON.stringify({ conceptKey: replaceAssetsConceptKey, replacements }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Replace failed");
+
+      toast.success(
+        "Assets replaced",
+        `${replacements.length} asset${replacements.length !== 1 ? "s" : ""} swapped in Meta.`
+      );
+      setShowReplaceAssetsDialog(false);
+      setReplaceAssetsConceptKey(null);
+      setReplaceAssetsFiles({});
+      utils.queue.list.invalidate();
+    } catch (err: any) {
+      toast.error("Replace failed", err.message || String(err));
+    } finally {
+      setReplaceAssetsBusy(false);
+    }
+  }
+
   async function applySetAdStatus(newStatus: "PAUSED" | "ACTIVE") {
     const targetIds = selectedIds.filter((id) => {
       const item = allItems.find((i) => i.id === id);
@@ -1946,6 +2031,22 @@ export default function Home() {
               ✎ Edit Live Ads
             </button>
           )}
+          {selectedKeys.size === 1 && (() => {
+            const onlyKey = [...selectedKeys][0];
+            const group = grouped.find((g) => g.key === onlyKey);
+            const isUploaded = group?.rows.some((r) => r.status === "uploaded" && (r as any).metaAdId);
+            if (!isUploaded) return null;
+            return (
+              <button
+                onClick={() => openReplaceAssetsDialog(onlyKey)}
+                className="px-2.5 py-1 text-xs rounded-md transition-colors"
+                style={{ background: "rgba(168,139,250,0.1)", color: "#a78bfa", border: "1px solid rgba(168,139,250,0.3)" }}
+                title="Replace the video/image assets on this live Meta ad"
+              >
+                ⇆ Replace Assets
+              </button>
+            );
+          })()}
           {selectedIds.some(id => allItems.find(i => i.id === id)?.status === "uploaded") && (
             <>
               <button
@@ -2918,6 +3019,150 @@ export default function Home() {
           metaDefaults={metaDefaults}
         />
       )}
+
+      {/* Replace Assets dialog */}
+      {showReplaceAssetsDialog && replaceAssetsConceptKey && (() => {
+        const group = grouped.find((g) => g.key === replaceAssetsConceptKey);
+        if (!group) return null;
+        const rows = group.rows;
+        const labelStyle: React.CSSProperties = {
+          color: "var(--text-muted)",
+          letterSpacing: "0.08em",
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: "uppercase",
+        };
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.6)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+            onClick={() => !replaceAssetsBusy && setShowReplaceAssetsDialog(false)}
+          >
+            <div
+              className="rounded-md p-5 w-[560px] max-w-[90vw] max-h-[85vh] overflow-y-auto"
+              style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+                Replace Creative Assets
+              </h2>
+              <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
+                Drop a new file onto any size to replace its asset in Meta. The ad keeps its
+                ID and stats but Meta may reset learning. Other text fields (URL, copy, CTA)
+                stay the same.
+              </p>
+              <p className="text-[11px] mb-4" style={{ color: "#fbbf24" }}>
+                ⚠ Concept: <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{group.shared.generatedAdName}</span>
+              </p>
+
+              <div className="space-y-2 mb-4">
+                {rows.map((row) => {
+                  const file = replaceAssetsFiles[row.id] || null;
+                  const accept = row.contentType === "VID" ? "video/*" : "image/*";
+                  return (
+                    <div
+                      key={row.id}
+                      onDragOver={(e) => { e.preventDefault(); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const dropped = e.dataTransfer.files[0];
+                        if (dropped) setReplaceAssetsFiles((s) => ({ ...s, [row.id]: dropped }));
+                      }}
+                      className="flex items-center gap-3 p-3 rounded"
+                      style={{
+                        background: "var(--surface-2)",
+                        border: file ? "1px dashed #a78bfa" : "1px dashed var(--surface-3)",
+                      }}
+                    >
+                      <div style={{ minWidth: 50 }}>
+                        <span
+                          className="font-mono font-bold"
+                          style={{
+                            fontSize: 10,
+                            padding: "2px 6px",
+                            borderRadius: 3,
+                            background: row.dimensions === "9:16" ? "rgba(168,139,250,0.1)" : "rgba(56,189,248,0.1)",
+                            color: row.dimensions === "9:16" ? "#a78bfa" : "#38bdf8",
+                            border: `1px solid ${row.dimensions === "9:16" ? "rgba(168,139,250,0.2)" : "rgba(56,189,248,0.2)"}`,
+                          }}
+                        >
+                          {row.dimensions}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div style={{ ...labelStyle, marginBottom: 2 }}>
+                          {row.contentType === "VID" ? "Video" : "Image"}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: file ? "var(--text-primary)" : "var(--text-muted)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            fontFamily: "'IBM Plex Mono', monospace",
+                          }}
+                        >
+                          {file ? `→ ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)` : `Drop new file here, or click to select`}
+                        </div>
+                      </div>
+                      <label
+                        className="px-2.5 py-1 text-xs rounded cursor-pointer transition-colors"
+                        style={{ background: "var(--surface-3)", color: "var(--text-secondary)" }}
+                      >
+                        Browse
+                        <input
+                          type="file"
+                          accept={accept}
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) setReplaceAssetsFiles((s) => ({ ...s, [row.id]: f }));
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {file && (
+                        <button
+                          onClick={() => setReplaceAssetsFiles((s) => ({ ...s, [row.id]: null }))}
+                          className="px-2 py-1 text-xs rounded transition-colors"
+                          style={{ background: "transparent", color: "var(--text-muted)", border: "1px solid var(--surface-3)" }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowReplaceAssetsDialog(false)}
+                  disabled={replaceAssetsBusy}
+                  className="px-3 py-1.5 text-xs rounded transition-colors"
+                  style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyReplaceAssets}
+                  disabled={replaceAssetsBusy || Object.values(replaceAssetsFiles).every((f) => !f)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded transition-colors"
+                  style={{
+                    background: replaceAssetsBusy ? "#7c3aed" : "#a78bfa",
+                    color: "white",
+                    opacity: replaceAssetsBusy || Object.values(replaceAssetsFiles).every((f) => !f) ? 0.6 : 1,
+                    cursor: replaceAssetsBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {replaceAssetsBusy ? "Replacing…" : "Replace Assets"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Keyboard shortcuts help overlay */}
       <KeyboardShortcutsHelp open={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />

@@ -1117,6 +1117,256 @@ export async function updateDestinationUrls(
   return updateCreativeFields(adIds, { destinationUrl: newDestinationUrl });
 }
 
+// ── Replace asset (video/image) on a live Meta ad ───────────────────
+//
+// Each asset (video or image) is associated with a row in our DB. To
+// replace assets on a live ad, we:
+// 1. Fetch the existing creative spec from Meta
+// 2. For each replacement: upload the new file to Meta, swap the
+//    asset id in the spec by matching the dimension's adlabel
+// 3. Create a new creative with the updated spec
+// 4. Reassign the ad to use the new creative
+// 5. Update each row's fileUrl/fileKey in our DB
+
+interface AssetReplacement {
+  rowId: number;          // uploadQueue.id of the row whose asset is being replaced
+  fileUrl: string;        // R2 public URL of the new file (already uploaded)
+  fileKey: string;
+  fileMimeType: string;
+  fileSize: number;
+}
+
+interface ReplaceAssetsResult {
+  conceptKey: string;
+  metaAdId: string;
+  success: boolean;
+  newCreativeId?: string;
+  error?: string;
+}
+
+export async function replaceAdAssets(
+  conceptKey: string,
+  replacements: AssetReplacement[]
+): Promise<ReplaceAssetsResult> {
+  if (!replacements.length) throw new Error("No replacements provided");
+
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken || !settings?.adAccountId) {
+    throw new Error("Meta Settings not configured.");
+  }
+  const accessToken = settings.accessToken;
+  const adAccountId = normalizeAdAccountId(settings.adAccountId);
+
+  // Load all rows in this concept group from DB
+  const allRows = await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(eq(schema.uploadQueue.conceptKey, conceptKey));
+  if (allRows.length === 0) throw new Error(`Concept ${conceptKey} not found`);
+  const primary = allRows[0];
+  if (!primary.metaAdId) throw new Error("Concept has not been uploaded to Meta yet");
+
+  // Build a map of rowId → new asset info for quick lookup
+  const replacementMap = new Map<number, AssetReplacement>();
+  for (const r of replacements) replacementMap.set(r.rowId, r);
+
+  try {
+    // Step 1: Fetch existing creative spec
+    const adRes = await fetch(
+      `${META_BASE}/${primary.metaAdId}?fields=creative{id,object_story_spec,asset_feed_spec,name,url_tags}&access_token=${encodeURIComponent(accessToken)}`
+    );
+    const adData = await adRes.json();
+    if (adData.error) throw new Error(`Failed to fetch ad: ${adData.error.message}`);
+    const oldCreative = adData.creative;
+    if (!oldCreative) throw new Error("No creative found on ad");
+
+    // Step 2: Upload new files to Meta and build a dimension → newAssetId map
+    // We need to know which dimension each replacement corresponds to so we
+    // can match it to the right adlabel in asset_feed_spec.
+    const dimToNewAsset = new Map<string, { id: string; type: "video" | "image" }>();
+    for (const replacement of replacements) {
+      const row = allRows.find((r) => r.id === replacement.rowId);
+      if (!row) throw new Error(`Row ${replacement.rowId} not in concept`);
+
+      const { buffer, mimeType } = await fetchFileBuffer(replacement.fileUrl);
+      const filename = row.filename || `${row.id}`;
+
+      if (isVideo(mimeType, filename)) {
+        const videoFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.mp4`;
+        const videoId = await uploadVideoToMeta(adAccountId, accessToken, buffer, videoFilename);
+        dimToNewAsset.set(row.dimensions, { id: videoId, type: "video" });
+      } else {
+        const imgFilename = /\.\w{2,4}$/.test(filename) ? filename : `${filename.replace(/\.+$/, "")}.png`;
+        const hash = await uploadImageToMeta(adAccountId, accessToken, buffer, imgFilename, mimeType);
+        dimToNewAsset.set(row.dimensions, { id: hash, type: "image" });
+      }
+    }
+
+    // Step 3: Build new creative body, swapping assets
+    const newCreativeBody: Record<string, any> = {
+      name: oldCreative.name || primary.generatedAdName || `${primary.id}`,
+      access_token: accessToken,
+    };
+
+    if (oldCreative.asset_feed_spec) {
+      const spec = typeof oldCreative.asset_feed_spec === "string"
+        ? JSON.parse(oldCreative.asset_feed_spec)
+        : oldCreative.asset_feed_spec;
+
+      // Map our dimensions to Meta's adlabel names
+      // (uploadConceptGroup uses "feed_label" for non-9:16 and "story_label" for 9:16)
+      const dimToAdlabel = (dims: string) => (dims === "9:16" ? "story_label" : "feed_label");
+
+      // Swap videos
+      if (Array.isArray(spec.videos)) {
+        spec.videos = spec.videos.map((v: any) => {
+          // Find the dim matching this video's adlabel
+          const adlabelName = v.adlabels?.[0]?.name;
+          for (const [dim, newAsset] of dimToNewAsset) {
+            if (newAsset.type === "video" && dimToAdlabel(dim) === adlabelName) {
+              return { ...v, video_id: newAsset.id };
+            }
+          }
+          return v;
+        });
+      }
+      // Swap images
+      if (Array.isArray(spec.images)) {
+        spec.images = spec.images.map((img: any) => {
+          const adlabelName = img.adlabels?.[0]?.name;
+          for (const [dim, newAsset] of dimToNewAsset) {
+            if (newAsset.type === "image" && dimToAdlabel(dim) === adlabelName) {
+              return { ...img, hash: newAsset.id };
+            }
+          }
+          return img;
+        });
+      }
+
+      const minimalStorySpec = typeof oldCreative.object_story_spec === "string"
+        ? JSON.parse(oldCreative.object_story_spec)
+        : (oldCreative.object_story_spec || {});
+      newCreativeBody.object_story_spec = JSON.stringify({
+        page_id: minimalStorySpec.page_id,
+        instagram_user_id: minimalStorySpec.instagram_user_id,
+      });
+      newCreativeBody.asset_feed_spec = JSON.stringify(spec);
+    } else if (oldCreative.object_story_spec) {
+      // Single placement: swap the single asset
+      const spec = typeof oldCreative.object_story_spec === "string"
+        ? JSON.parse(oldCreative.object_story_spec)
+        : oldCreative.object_story_spec;
+
+      // Take the first replacement (single placement only has one asset)
+      const firstReplacement = replacements[0];
+      const row = allRows.find((r) => r.id === firstReplacement.rowId);
+      const newAsset = row ? dimToNewAsset.get(row.dimensions) : undefined;
+      if (!newAsset) throw new Error("No new asset for single-placement ad");
+
+      if (spec.video_data && newAsset.type === "video") {
+        spec.video_data.video_id = newAsset.id;
+        // Re-fetch thumbnail for the new video
+        try {
+          const thumbRes = await fetch(
+            `${META_BASE}/${newAsset.id}?fields=thumbnails&access_token=${accessToken}`
+          );
+          const thumbData = await thumbRes.json();
+          if (thumbData.thumbnails?.data?.[0]?.uri) {
+            spec.video_data.image_url = thumbData.thumbnails.data[0].uri;
+          }
+        } catch {}
+      } else if (spec.link_data && newAsset.type === "image") {
+        spec.link_data.image_hash = newAsset.id;
+      } else {
+        throw new Error("Asset type mismatch with existing creative");
+      }
+      newCreativeBody.object_story_spec = JSON.stringify(spec);
+    } else {
+      throw new Error("Creative has neither asset_feed_spec nor object_story_spec");
+    }
+
+    if (oldCreative.url_tags) newCreativeBody.url_tags = oldCreative.url_tags;
+
+    // Step 4: Create the new creative
+    const createRes = await fetch(`${META_BASE}/act_${adAccountId}/adcreatives`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newCreativeBody),
+    });
+    const createData = await createRes.json();
+    if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+    const newCreativeId = createData.id;
+    if (!newCreativeId) throw new Error("No creative ID returned");
+
+    // Step 5: Reassign the ad
+    const updateRes = await fetch(`${META_BASE}/${primary.metaAdId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creative: { creative_id: newCreativeId },
+        access_token: accessToken,
+      }),
+    });
+    const updateData = await updateRes.json();
+    if (updateData.error) throw new Error(`Update ad failed: ${updateData.error.message}`);
+
+    // Step 6: Update DB rows with new file info
+    for (const replacement of replacements) {
+      await db
+        .update(schema.uploadQueue)
+        .set({
+          fileUrl: replacement.fileUrl,
+          fileKey: replacement.fileKey,
+          fileMimeType: replacement.fileMimeType,
+          fileSize: replacement.fileSize,
+          metaCreativeId: newCreativeId,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(schema.uploadQueue.id, replacement.rowId));
+    }
+    // Also update metaCreativeId on rows that weren't replaced but share the ad
+    const unreplacedIds = allRows
+      .filter((r) => !replacementMap.has(r.id))
+      .map((r) => r.id);
+    if (unreplacedIds.length > 0) {
+      await db
+        .update(schema.uploadQueue)
+        .set({ metaCreativeId: newCreativeId, updatedAt: sql`now()` })
+        .where(inArray(schema.uploadQueue.id, unreplacedIds));
+    }
+
+    // Audit log
+    try {
+      await db.insert(schema.auditLog).values({
+        action: "replace_ad_assets",
+        entityType: "ad",
+        entityId: primary.metaAdId,
+        details: JSON.stringify({
+          conceptKey,
+          oldCreativeId: oldCreative.id,
+          newCreativeId,
+          replacedRowIds: replacements.map((r) => r.rowId),
+        }),
+      });
+    } catch {}
+
+    return {
+      conceptKey,
+      metaAdId: primary.metaAdId,
+      success: true,
+      newCreativeId,
+    };
+  } catch (err: any) {
+    return {
+      conceptKey,
+      metaAdId: primary.metaAdId || "",
+      success: false,
+      error: err.message || String(err),
+    };
+  }
+}
+
 // ── Pause / resume ads in Meta ──────────────────────────────────────
 //
 // Sets each ad's status to PAUSED or ACTIVE via the Meta API.

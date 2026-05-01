@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -382,6 +382,39 @@ app.get("/api/set-ad-status/status", (_req, res) => {
     ...activeStatusJob,
     elapsedMs: Date.now() - activeStatusJob.startedAt,
   });
+});
+
+// ─── Replace creative assets on a live Meta ad (one concept at a time) ──
+app.post("/api/replace-ad-assets", express.json(), async (req, res) => {
+  const { conceptKey, replacements } = req.body as {
+    conceptKey?: string;
+    replacements?: Array<{
+      rowId: number;
+      fileUrl: string;
+      fileKey: string;
+      fileMimeType: string;
+      fileSize: number;
+    }>;
+  };
+  if (!conceptKey || typeof conceptKey !== "string") {
+    res.status(400).json({ success: false, error: "conceptKey required" });
+    return;
+  }
+  if (!Array.isArray(replacements) || replacements.length === 0) {
+    res.status(400).json({ success: false, error: "replacements (non-empty array) required" });
+    return;
+  }
+  try {
+    const result = await replaceAdAssets(conceptKey, replacements);
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (err: any) {
+    logger.error("Replace ad assets failed", { error: err.message });
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ─── Send to Meta (single ad — finds its concept group automatically) ──
