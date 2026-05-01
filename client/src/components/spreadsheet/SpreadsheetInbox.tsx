@@ -156,11 +156,40 @@ function Cell({
   }, [isEditing]);
 
   useEffect(() => {
-    setEditValue(value);
-  }, [value]);
+    // Only sync to incoming value when we're NOT actively editing.
+    // Otherwise the user's typing gets clobbered when the parent re-renders
+    // (e.g. after a refetch elsewhere completes).
+    if (!isEditing) setEditValue(value);
+  }, [value, isEditing]);
+
+  // Brief flash after the value changes (excluding the initial mount and
+  // user-initiated edits) — gives confirmation the save landed.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const lastValueRef = useRef(value);
+  const initialMountRef = useRef(true);
+  useEffect(() => {
+    if (initialMountRef.current) {
+      initialMountRef.current = false;
+      lastValueRef.current = value;
+      return;
+    }
+    if (value !== lastValueRef.current && !isEditing) {
+      lastValueRef.current = value;
+      setSavedFlash(true);
+      const t = setTimeout(() => setSavedFlash(false), 600);
+      return () => clearTimeout(t);
+    }
+    lastValueRef.current = value;
+  }, [value, isEditing]);
 
   const filled = value && value.trim();
-  const cellBg = isFillTarget ? "rgba(0,153,198,0.10)" : filled ? "rgba(46,160,67,0.06)" : "transparent";
+  const cellBg = savedFlash
+    ? "rgba(74,222,128,0.18)"
+    : isFillTarget
+    ? "rgba(0,153,198,0.10)"
+    : filled
+    ? "rgba(46,160,67,0.06)"
+    : "transparent";
   const cellBorder = isFocused
     ? "1px solid rgba(0,153,198,0.6)"
     : isFillTarget
@@ -234,6 +263,7 @@ function Cell({
         color: filled ? "var(--text-primary)" : "var(--text-muted)",
         fontFamily: field === "filename" || field === "date" ? "'IBM Plex Mono', monospace" : "inherit",
         position: "relative",
+        transition: "background 0.4s ease",
       }}
       onClick={() => { onFocus(); onStartEdit(); }}
       onMouseDown={(e) => { if (e.detail === 1) onFocus(); }}

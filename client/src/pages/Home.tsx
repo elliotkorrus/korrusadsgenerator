@@ -748,8 +748,34 @@ export default function Home() {
   const { data: copyEntries = [] } = trpc.copy.list.useQuery({});
 
   const updateMut = trpc.queue.update.useMutation({
-    onSuccess: () => { utils.queue.list.invalidate(); },
-    onError: (err) => { toast.error("Update failed", err.message); },
+    // Optimistic update: patch the local cache immediately so the UI reflects
+    // the change before the server responds. Big UX win for cell edits.
+    onMutate: async (variables) => {
+      await utils.queue.list.cancel();
+      const previous = utils.queue.list.getData({});
+      utils.queue.list.setData({}, (old: any) => {
+        if (!old) return old;
+        return old.map((item: any) =>
+          item.id === variables.id ? { ...item, ...variables } : item
+        );
+      });
+      return { previous };
+    },
+    onError: (err, _vars, ctx: any) => {
+      // Roll back on error
+      if (ctx?.previous) utils.queue.list.setData({}, ctx.previous);
+      toast.error("Update failed", err.message);
+    },
+    onSuccess: (data: any) => {
+      // Patch the cache with the server's authoritative response
+      // (server may regenerate fields like generatedAdName).
+      if (data && data.id) {
+        utils.queue.list.setData({}, (old: any) => {
+          if (!old) return old;
+          return old.map((item: any) => (item.id === data.id ? { ...item, ...data } : item));
+        });
+      }
+    },
   });
   const deleteMut = trpc.queue.delete.useMutation({
     onSuccess: () => { utils.queue.list.invalidate(); },
@@ -781,7 +807,18 @@ export default function Home() {
     onError: (err) => { toast.error("Add size failed", err.message); },
   });
   const createMut = trpc.queue.create.useMutation({
-    onSuccess: () => { utils.queue.list.invalidate(); },
+    // Patch the new row directly into cache instead of refetching the whole list.
+    // Significant win when uploading many files in parallel.
+    onSuccess: (data: any) => {
+      if (data && data.id) {
+        utils.queue.list.setData({}, (old: any) => {
+          if (!old) return [data];
+          // Avoid duplicate insertion if invalidate races
+          if (old.some((r: any) => r.id === data.id)) return old;
+          return [...old, data];
+        });
+      }
+    },
     onError: (err) => { toast.error("Create failed", err.message); },
   });
   const retryFailedMut = trpc.queue.retryFailed.useMutation({
@@ -1266,9 +1303,10 @@ export default function Home() {
   const updateConceptField = async (conceptKey: string, field: string, value: string) => {
     const group = grouped.find((g) => g.key === conceptKey);
     if (!group) return;
-    for (const row of group.rows) {
-      await updateMut.mutateAsync({ id: row.id, [field]: value });
-    }
+    // Parallel updates — was sequential which caused 1-2s lag on multi-size concepts
+    await Promise.all(
+      group.rows.map((row) => updateMut.mutateAsync({ id: row.id, [field]: value }))
+    );
     // Auto-resolve headline and bodyCopy when copySlug changes
     if (field === "copySlug" && value) {
       const entry = copyEntries.find((c: any) => c.copySlug === value);
