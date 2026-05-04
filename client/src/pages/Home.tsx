@@ -2371,9 +2371,14 @@ export default function Home() {
 
         {/* Ad Sets view — group all uploaded ads by adSetId */}
         {focusView === "adsets" && (() => {
-          // Build a set of ACTIVE ad set IDs (where both ad set AND campaign are ACTIVE).
-          // Note: this list is cached 5 min and may not include very recent changes.
+          // Build maps of ACTIVE ad sets from Meta (cached 5 min).
+          // adSetsForBatch comes from meta.getAdSets which is filtered to
+          // ACTIVE ad sets in ACTIVE campaigns.
           const activeAdSetIds = new Set((adSetsForBatch || []).map((s: any) => String(s.id)));
+          const adSetNameById = new Map<string, string>();
+          for (const s of (adSetsForBatch || []) as any[]) {
+            if (s.id && s.name) adSetNameById.set(String(s.id), s.name);
+          }
           const uploadedAds = allItems.filter(
             (i) => i.status === "uploaded" && i.metaAdId && i.adSetId
           );
@@ -2384,16 +2389,22 @@ export default function Home() {
               </div>
             );
           }
-          // Group by adSetId
+          // Group by adSetId. Resolve display name in priority order:
+          // 1. Meta's live ad-set list (most authoritative)
+          // 2. adSetName from our DB
+          // 3. Fall back to ad set ID
           const adSetMap = new Map<string, { adSetId: string; adSetName: string; ads: typeof uploadedAds; isActive: boolean }>();
           for (const ad of uploadedAds) {
             const key = ad.adSetId || "__no_ad_set__";
             if (!adSetMap.has(key)) {
+              const idStr = String(ad.adSetId || "");
+              const metaName = adSetNameById.get(idStr);
+              const displayName = metaName || ad.adSetName || idStr || "Unassigned";
               adSetMap.set(key, {
                 adSetId: ad.adSetId || "",
-                adSetName: ad.adSetName || (ad.adSetId ? ad.adSetId : "Unassigned"),
+                adSetName: displayName,
                 ads: [],
-                isActive: activeAdSetIds.has(String(ad.adSetId)),
+                isActive: activeAdSetIds.has(idStr),
               });
             }
             adSetMap.get(key)!.ads.push(ad);
