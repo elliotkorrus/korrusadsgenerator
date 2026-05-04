@@ -1410,12 +1410,14 @@ export default function Home() {
   const [duplicateNameSuffix, setDuplicateNameSuffix] = useState("_v2");
   const [duplicateBusy, setDuplicateBusy] = useState(false);
   const [duplicateProgress, setDuplicateProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [duplicateErrors, setDuplicateErrors] = useState<Array<{ adId: number; error: string }>>([]);
 
   function openDuplicateDialog(sourceAdIds: number[], label: string) {
     setDuplicateSourceAdIds(sourceAdIds);
     setDuplicateSourceLabel(label);
     setDuplicateUrl("");
     setDuplicateNameSuffix("_v2");
+    setDuplicateErrors([]);
     setShowDuplicateDialog(true);
   }
 
@@ -1435,6 +1437,7 @@ export default function Home() {
 
     setDuplicateBusy(true);
     setDuplicateProgress({ completed: 0, total: duplicateSourceAdIds.length });
+    setDuplicateErrors([]);
     const token = localStorage.getItem("app-token");
     const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
 
@@ -1453,6 +1456,7 @@ export default function Home() {
 
       let finalSuccess = 0;
       let finalFailed = 0;
+      let finalErrors: Array<{ adId: number; error: string }> = [];
       while (true) {
         await new Promise((r) => setTimeout(r, 1500));
         const statusRes = await fetch("/api/duplicate-ads-with-url/status", { headers: authHeaders });
@@ -1466,21 +1470,24 @@ export default function Home() {
         if (status.done) {
           finalSuccess = status.success || 0;
           finalFailed = status.failed || 0;
+          finalErrors = status.errors || [];
           break;
         }
       }
+      setDuplicateErrors(finalErrors);
       if (finalFailed > 0) {
         toast.warning(
           `${finalSuccess}/${finalSuccess + finalFailed} duplicated`,
-          `${finalFailed} failed. The new ads are PAUSED in Meta — review and resume when ready.`
+          `${finalFailed} failed. See dialog for error details.`
         );
+        // Keep dialog open so user can read the errors
       } else {
         toast.success(
           `${finalSuccess} ad${finalSuccess !== 1 ? "s" : ""} duplicated`,
           `New ads are PAUSED in Meta. Resume them when ready.`
         );
+        setShowDuplicateDialog(false);
       }
-      setShowDuplicateDialog(false);
       utils.queue.list.invalidate();
     } catch (err: any) {
       toast.error("Duplicate failed", err.message || String(err));
@@ -3681,6 +3688,32 @@ export default function Home() {
                       }}
                     />
                   </div>
+                </div>
+              )}
+
+              {duplicateErrors.length > 0 && (
+                <div
+                  className="mb-3 p-2 rounded"
+                  style={{
+                    background: "rgba(248,113,113,0.06)",
+                    border: "1px solid rgba(248,113,113,0.2)",
+                    maxHeight: 200,
+                    overflowY: "auto",
+                  }}
+                >
+                  <div style={{ ...labelStyle, color: "#f87171", marginBottom: 6 }}>
+                    {duplicateErrors.length} error{duplicateErrors.length !== 1 ? "s" : ""}
+                  </div>
+                  <ul style={{ fontSize: 10, color: "var(--text-secondary)", fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.5 }}>
+                    {duplicateErrors.slice(0, 10).map((e, idx) => (
+                      <li key={idx} style={{ marginBottom: 4 }}>
+                        <span style={{ color: "var(--text-muted)" }}>ad #{e.adId}:</span> {e.error}
+                      </li>
+                    ))}
+                    {duplicateErrors.length > 10 && (
+                      <li style={{ color: "var(--text-muted)" }}>…and {duplicateErrors.length - 10} more</li>
+                    )}
+                  </ul>
                 </div>
               )}
 
