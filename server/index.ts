@@ -411,8 +411,26 @@ app.post("/api/duplicate-ads-with-url", express.json(), async (req, res) => {
     return;
   }
   if (activeDuplicateJob && !activeDuplicateJob.done) {
-    res.status(409).json({ success: false, error: "A duplicate job is already running. Wait for it to finish." });
-    return;
+    const elapsedMs = Date.now() - activeDuplicateJob.startedAt;
+    const STALE_AFTER_MS = 5 * 60 * 1000;
+    if (elapsedMs > STALE_AFTER_MS) {
+      logger.warn("Auto-resetting stale duplicate job", {
+        elapsedMs,
+        completed: activeDuplicateJob.completed,
+        total: activeDuplicateJob.total,
+      });
+      activeDuplicateJob = null;
+    } else {
+      const elapsedSec = Math.round(elapsedMs / 1000);
+      res.status(409).json({
+        success: false,
+        error: `A duplicate job is already running (${activeDuplicateJob.completed}/${activeDuplicateJob.total} done, ${elapsedSec}s elapsed). Wait for it to finish.`,
+        elapsedMs,
+        completed: activeDuplicateJob.completed,
+        total: activeDuplicateJob.total,
+      });
+      return;
+    }
   }
 
   activeDuplicateJob = {
