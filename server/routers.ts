@@ -1003,12 +1003,16 @@ const metaSettingsRouter = t.router({
     try {
       const allAdSets: any[] = [];
       let url: string | null = `https://graph.facebook.com/v21.0/${settings.adAccountId}/adsets?${new URLSearchParams({
-        fields: "id,name,status,campaign{id,name,status}",
+        fields: "id,name,status,effective_status,campaign{id,name,status}",
         access_token: settings.accessToken,
         limit: "200",
       }).toString()}`;
 
-      // Paginate through all ad sets
+      // Paginate through all ad sets. We treat an ad set as "live" if its own
+      // status is ACTIVE and the parent campaign is not DELETED/ARCHIVED.
+      // (We deliberately allow PAUSED / IN_PROCESS / WITH_ISSUES campaigns
+      // through — users still consider those ad sets "live" since they set
+      // them to active, and pausing at the campaign level is reversible.)
       while (url) {
         const res: Response = await fetch(url);
         if (!res.ok) {
@@ -1018,13 +1022,20 @@ const metaSettingsRouter = t.router({
         }
         const data: any = await res.json();
         const items = (data.data || [])
-          .filter((s: any) => s.status === "ACTIVE" && s.campaign?.status === "ACTIVE")
+          .filter((s: any) => {
+            if (s.status !== "ACTIVE") return false;
+            const campaignStatus = s.campaign?.status;
+            if (campaignStatus === "DELETED" || campaignStatus === "ARCHIVED") return false;
+            return true;
+          })
           .map((s: any) => ({
             id: s.id,
             name: s.name,
             status: s.status,
+            effectiveStatus: s.effective_status,
             campaignId: s.campaign?.id,
             campaignName: s.campaign?.name,
+            campaignStatus: s.campaign?.status,
           }));
         allAdSets.push(...items);
         url = data.paging?.next || null;
