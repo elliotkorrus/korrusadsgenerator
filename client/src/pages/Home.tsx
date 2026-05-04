@@ -2366,10 +2366,23 @@ export default function Home() {
           );
         })()}
 
-        {/* Ad Sets view — group all uploaded ads by adSetId */}
+        {/* Ad Sets view — group all uploaded ads by adSetId, only show active ad sets */}
         {focusView === "adsets" && (() => {
-          const uploadedAds = allItems.filter((i) => i.status === "uploaded" && i.metaAdId);
-          if (uploadedAds.length === 0) return null;
+          // adSetsForBatch is already filtered to ACTIVE ad sets in ACTIVE campaigns
+          const activeAdSetIds = new Set((adSetsForBatch || []).map((s: any) => s.id));
+          const uploadedAds = allItems.filter(
+            (i) => i.status === "uploaded" && i.metaAdId && i.adSetId && activeAdSetIds.has(i.adSetId)
+          );
+          if (uploadedAds.length === 0) {
+            return (
+              <div className="px-8 py-16 text-center" style={{ color: "var(--text-muted)" }}>
+                <p style={{ fontSize: 13 }}>No live ad sets with uploaded ads.</p>
+                <p style={{ fontSize: 11, marginTop: 6 }}>
+                  Showing only ad sets where both the ad set AND its campaign are ACTIVE in Meta.
+                </p>
+              </div>
+            );
+          }
           // Group by adSetId
           const adSetMap = new Map<string, { adSetId: string; adSetName: string; ads: typeof uploadedAds }>();
           for (const ad of uploadedAds) {
