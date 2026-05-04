@@ -157,6 +157,79 @@ function placementType(dims: string): "story" | "feed" {
   return "feed"; // 4:5, 1:1, 16:9 are all feed placements
 }
 
+/**
+ * When you GET a creative spec from Meta, the response includes read-only and
+ * computed fields (e.g. asset IDs, processed asset references, expanded
+ * customization rules) that aren't accepted on POST. Strip those before
+ * posting back to create a derived creative.
+ */
+function sanitizeAssetFeedSpecForPost(spec: any): any {
+  if (!spec || typeof spec !== "object") return spec;
+  // Top-level read-only fields we've seen Meta inject on GET responses
+  const READONLY_TOP_LEVEL = [
+    "id",
+    "additional_data",
+    "reasons_to_show",
+    "degrees_of_freedom_spec",
+    "asset_feed_id",
+    "audience_label",
+    "creation_time",
+    "preview_url",
+  ];
+  const cleaned: any = { ...spec };
+  for (const k of READONLY_TOP_LEVEL) delete cleaned[k];
+
+  // For each asset reference array, remove read-only per-item fields
+  const stripItems = (items: any[], allowed: string[]) =>
+    items.map((it) => {
+      const out: any = {};
+      for (const k of allowed) if (it[k] !== undefined) out[k] = it[k];
+      return out;
+    });
+
+  if (Array.isArray(cleaned.videos)) {
+    cleaned.videos = stripItems(cleaned.videos, ["video_id", "thumbnail_url", "thumbnail_hash", "url_tags", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.images)) {
+    cleaned.images = stripItems(cleaned.images, ["hash", "url_tags", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.bodies)) {
+    cleaned.bodies = stripItems(cleaned.bodies, ["text", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.titles)) {
+    cleaned.titles = stripItems(cleaned.titles, ["text", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.descriptions)) {
+    cleaned.descriptions = stripItems(cleaned.descriptions, ["text", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.link_urls)) {
+    cleaned.link_urls = stripItems(cleaned.link_urls, ["website_url", "display_url", "deeplink_url", "adlabels"]);
+  }
+  if (Array.isArray(cleaned.captions)) {
+    cleaned.captions = stripItems(cleaned.captions, ["text", "adlabels"]);
+  }
+  // Optimization type — Meta sometimes omits it on GET; ensure present
+  if (!cleaned.optimization_type) cleaned.optimization_type = "PLACEMENT";
+  // ad_formats — should be set; default to SINGLE_VIDEO if videos exist
+  if (!Array.isArray(cleaned.ad_formats) || cleaned.ad_formats.length === 0) {
+    cleaned.ad_formats = Array.isArray(cleaned.videos) && cleaned.videos.length > 0
+      ? ["SINGLE_VIDEO"]
+      : ["SINGLE_IMAGE"];
+  }
+  return cleaned;
+}
+
+/** Format a Meta API error object into a useful one-line string. */
+function formatMetaError(err: any): string {
+  if (!err) return "Unknown error";
+  const parts: string[] = [];
+  if (err.message) parts.push(err.message);
+  if (err.error_user_msg && err.error_user_msg !== err.message) parts.push(err.error_user_msg);
+  if (err.error_user_title) parts.push(`(${err.error_user_title})`);
+  if (typeof err.code === "number") parts.push(`[code ${err.code}${err.error_subcode ? ` / ${err.error_subcode}` : ""}]`);
+  return parts.join(" — ");
+}
+
 // ── Retry Utility ───────────────────────────────────────────────────
 
 /** Meta API error codes that should NOT be retried (permission/validation/token) */
@@ -953,9 +1026,10 @@ export async function updateCreativeFields(
 
       // Determine spec type: asset_feed_spec (multi-placement) or object_story_spec (single)
       if (oldCreative.asset_feed_spec) {
-        const spec = typeof oldCreative.asset_feed_spec === "string"
+        let spec = typeof oldCreative.asset_feed_spec === "string"
           ? JSON.parse(oldCreative.asset_feed_spec)
           : oldCreative.asset_feed_spec;
+        spec = sanitizeAssetFeedSpecForPost(spec);
 
         if (updates.destinationUrl && Array.isArray(spec.link_urls)) {
           spec.link_urls = spec.link_urls.map((u: any) => ({
@@ -1038,7 +1112,7 @@ export async function updateCreativeFields(
         body: JSON.stringify(newCreativeBody),
       });
       const createData = await createRes.json();
-      if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+      if (createData.error) throw new Error(`Create creative failed: ${formatMetaError(createData.error)}`);
       const newCreativeId = createData.id;
       if (!newCreativeId) throw new Error("No creative ID returned");
 
@@ -1211,9 +1285,10 @@ export async function replaceAdAssets(
     };
 
     if (oldCreative.asset_feed_spec) {
-      const spec = typeof oldCreative.asset_feed_spec === "string"
+      let spec = typeof oldCreative.asset_feed_spec === "string"
         ? JSON.parse(oldCreative.asset_feed_spec)
         : oldCreative.asset_feed_spec;
+      spec = sanitizeAssetFeedSpecForPost(spec);
 
       // Map our dimensions to Meta's adlabel names
       // (uploadConceptGroup uses "feed_label" for non-9:16 and "story_label" for 9:16)
@@ -1296,7 +1371,7 @@ export async function replaceAdAssets(
       body: JSON.stringify(newCreativeBody),
     });
     const createData = await createRes.json();
-    if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+    if (createData.error) throw new Error(`Create creative failed: ${formatMetaError(createData.error)}`);
     const newCreativeId = createData.id;
     if (!newCreativeId) throw new Error("No creative ID returned");
 
@@ -1461,9 +1536,10 @@ export async function addAdAssets(
 
     if (oldCreative.asset_feed_spec) {
       // Already multi-placement — append to videos/images
-      const spec = typeof oldCreative.asset_feed_spec === "string"
+      let spec = typeof oldCreative.asset_feed_spec === "string"
         ? JSON.parse(oldCreative.asset_feed_spec)
         : oldCreative.asset_feed_spec;
+      spec = sanitizeAssetFeedSpecForPost(spec);
 
       for (const a of newAssets) {
         const adlabelName = a.placement === "feed" ? "feed_label" : "story_label";
@@ -1599,7 +1675,7 @@ export async function addAdAssets(
       body: JSON.stringify(newCreativeBody),
     });
     const createData = await createRes.json();
-    if (createData.error) throw new Error(`Create creative failed: ${createData.error.message}`);
+    if (createData.error) throw new Error(`Create creative failed: ${formatMetaError(createData.error)}`);
     const newCreativeId = createData.id;
     if (!newCreativeId) throw new Error("No creative ID returned");
 
@@ -1804,17 +1880,22 @@ export async function duplicateAdsWithNewUrl(
       };
 
       if (oldCreative.asset_feed_spec) {
-        const spec = typeof oldCreative.asset_feed_spec === "string"
+        let spec = typeof oldCreative.asset_feed_spec === "string"
           ? JSON.parse(oldCreative.asset_feed_spec)
           : oldCreative.asset_feed_spec;
+
+        // Strip read-only fields Meta added on the GET response
+        spec = sanitizeAssetFeedSpecForPost(spec);
 
         if (Array.isArray(spec.link_urls)) {
           spec.link_urls = spec.link_urls.map((u: any) => ({
             ...u,
             website_url: options.newDestinationUrl,
           }));
+        } else {
+          spec.link_urls = [{ website_url: options.newDestinationUrl }];
         }
-        if (options.newCta && Array.isArray(spec.call_to_action_types)) {
+        if (options.newCta) {
           spec.call_to_action_types = [options.newCta];
         }
 
@@ -1863,7 +1944,16 @@ export async function duplicateAdsWithNewUrl(
       });
       const createCreativeData = await createCreativeRes.json();
       if (createCreativeData.error) {
-        throw new Error(`Create creative failed: ${createCreativeData.error.message}`);
+        // Log the full error + the request body we sent for server-side debugging
+        try {
+          console.error("[duplicate] Create creative failed:", JSON.stringify({
+            adId: primary.id,
+            metaAdId: primary.metaAdId,
+            error: createCreativeData.error,
+            requestBody: { ...newCreativeBody, access_token: "***" },
+          }, null, 2));
+        } catch {}
+        throw new Error(`Create creative failed: ${formatMetaError(createCreativeData.error)}`);
       }
       const newCreativeId = createCreativeData.id;
       if (!newCreativeId) throw new Error("No creative ID returned");
