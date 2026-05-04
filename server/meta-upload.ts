@@ -219,6 +219,30 @@ function sanitizeAssetFeedSpecForPost(spec: any): any {
   return cleaned;
 }
 
+/**
+ * Sanitize an object_story_spec for POSTing back. Meta returns redundant or
+ * read-only fields on GET that it rejects on POST:
+ * - video_data: returns BOTH image_url and image_hash; only one allowed.
+ *   Prefer image_hash (server-side asset, never expires) over image_url.
+ * - link_data: similar, image_hash + image_url could both be present.
+ */
+function sanitizeObjectStorySpecForPost(spec: any): any {
+  if (!spec || typeof spec !== "object") return spec;
+  const cleaned: any = JSON.parse(JSON.stringify(spec)); // deep copy
+  if (cleaned.video_data) {
+    if (cleaned.video_data.image_hash && cleaned.video_data.image_url) {
+      // Both set — Meta requires exactly one. Prefer hash.
+      delete cleaned.video_data.image_url;
+    }
+  }
+  if (cleaned.link_data) {
+    if (cleaned.link_data.image_hash && cleaned.link_data.picture) {
+      delete cleaned.link_data.picture;
+    }
+  }
+  return cleaned;
+}
+
 /** Format a Meta API error object into a useful one-line string. */
 function formatMetaError(err: any): string {
   if (!err) return "Unknown error";
@@ -1057,9 +1081,10 @@ export async function updateCreativeFields(
         });
         newCreativeBody.asset_feed_spec = JSON.stringify(spec);
       } else if (oldCreative.object_story_spec) {
-        const spec = typeof oldCreative.object_story_spec === "string"
+        let spec = typeof oldCreative.object_story_spec === "string"
           ? JSON.parse(oldCreative.object_story_spec)
           : oldCreative.object_story_spec;
+        spec = sanitizeObjectStorySpecForPost(spec);
 
         // video_data path (single video)
         if (spec.video_data) {
@@ -1330,9 +1355,10 @@ export async function replaceAdAssets(
       newCreativeBody.asset_feed_spec = JSON.stringify(spec);
     } else if (oldCreative.object_story_spec) {
       // Single placement: swap the single asset
-      const spec = typeof oldCreative.object_story_spec === "string"
+      let spec = typeof oldCreative.object_story_spec === "string"
         ? JSON.parse(oldCreative.object_story_spec)
         : oldCreative.object_story_spec;
+      spec = sanitizeObjectStorySpecForPost(spec);
 
       // Take the first replacement (single placement only has one asset)
       const firstReplacement = replacements[0];
@@ -1562,9 +1588,10 @@ export async function addAdAssets(
       newCreativeBody.asset_feed_spec = JSON.stringify(spec);
     } else if (oldCreative.object_story_spec) {
       // Convert from single-placement to multi-placement
-      const oldSpec = typeof oldCreative.object_story_spec === "string"
+      let oldSpec = typeof oldCreative.object_story_spec === "string"
         ? JSON.parse(oldCreative.object_story_spec)
         : oldCreative.object_story_spec;
+      oldSpec = sanitizeObjectStorySpecForPost(oldSpec);
 
       // Extract original asset id and placement
       const existingRow = allRows[0];
@@ -1908,9 +1935,13 @@ export async function duplicateAdsWithNewUrl(
         });
         newCreativeBody.asset_feed_spec = JSON.stringify(spec);
       } else if (oldCreative.object_story_spec) {
-        const spec = typeof oldCreative.object_story_spec === "string"
+        let spec = typeof oldCreative.object_story_spec === "string"
           ? JSON.parse(oldCreative.object_story_spec)
           : oldCreative.object_story_spec;
+
+        // Strip redundant image_url/image_hash combos that Meta returns on GET
+        // but rejects on POST (ObjectStorySpecRedundant)
+        spec = sanitizeObjectStorySpecForPost(spec);
 
         if (spec.video_data) {
           if (spec.video_data.call_to_action?.value) {
