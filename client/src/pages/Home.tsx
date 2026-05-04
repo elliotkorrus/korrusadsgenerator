@@ -1399,6 +1399,9 @@ export default function Home() {
   const [pausingAds, setPausingAds] = useState<null | "PAUSED" | "ACTIVE">(null);
   const [pauseProgress, setPauseProgress] = useState<{ completed: number; total: number } | null>(null);
 
+  // Ad Sets view — toggle to show only active ad sets
+  const [adSetsActiveOnly, setAdSetsActiveOnly] = useState(true);
+
   // Duplicate-with-new-URL state
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [duplicateSourceAdIds, setDuplicateSourceAdIds] = useState<number[]>([]);
@@ -2366,25 +2369,23 @@ export default function Home() {
           );
         })()}
 
-        {/* Ad Sets view — group all uploaded ads by adSetId, only show active ad sets */}
+        {/* Ad Sets view — group all uploaded ads by adSetId */}
         {focusView === "adsets" && (() => {
-          // adSetsForBatch is already filtered to ACTIVE ad sets in ACTIVE campaigns
-          const activeAdSetIds = new Set((adSetsForBatch || []).map((s: any) => s.id));
+          // Build a set of ACTIVE ad set IDs (where both ad set AND campaign are ACTIVE).
+          // Note: this list is cached 5 min and may not include very recent changes.
+          const activeAdSetIds = new Set((adSetsForBatch || []).map((s: any) => String(s.id)));
           const uploadedAds = allItems.filter(
-            (i) => i.status === "uploaded" && i.metaAdId && i.adSetId && activeAdSetIds.has(i.adSetId)
+            (i) => i.status === "uploaded" && i.metaAdId && i.adSetId
           );
           if (uploadedAds.length === 0) {
             return (
               <div className="px-8 py-16 text-center" style={{ color: "var(--text-muted)" }}>
-                <p style={{ fontSize: 13 }}>No live ad sets with uploaded ads.</p>
-                <p style={{ fontSize: 11, marginTop: 6 }}>
-                  Showing only ad sets where both the ad set AND its campaign are ACTIVE in Meta.
-                </p>
+                <p style={{ fontSize: 13 }}>No uploaded ads with ad set assignments yet.</p>
               </div>
             );
           }
           // Group by adSetId
-          const adSetMap = new Map<string, { adSetId: string; adSetName: string; ads: typeof uploadedAds }>();
+          const adSetMap = new Map<string, { adSetId: string; adSetName: string; ads: typeof uploadedAds; isActive: boolean }>();
           for (const ad of uploadedAds) {
             const key = ad.adSetId || "__no_ad_set__";
             if (!adSetMap.has(key)) {
@@ -2392,13 +2393,54 @@ export default function Home() {
                 adSetId: ad.adSetId || "",
                 adSetName: ad.adSetName || (ad.adSetId ? ad.adSetId : "Unassigned"),
                 ads: [],
+                isActive: activeAdSetIds.has(String(ad.adSetId)),
               });
             }
             adSetMap.get(key)!.ads.push(ad);
           }
-          const adSetGroups = [...adSetMap.values()].sort((a, b) => a.adSetName.localeCompare(b.adSetName));
+          let adSetGroups = [...adSetMap.values()].sort((a, b) => a.adSetName.localeCompare(b.adSetName));
+          const activeCount = adSetGroups.filter((g) => g.isActive).length;
+          const totalCount = adSetGroups.length;
+          if (adSetsActiveOnly) {
+            adSetGroups = adSetGroups.filter((g) => g.isActive);
+          }
           return (
-            <div className="p-4 space-y-2">
+            <div className="p-4">
+              {/* Header with toggle + refresh */}
+              <div className="flex items-center gap-3 mb-3 pb-2" style={{ borderBottom: "1px solid var(--surface-2)" }}>
+                <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                  <strong>{activeCount}</strong> active <span style={{ color: "var(--text-muted)" }}>of {totalCount} total ad sets with uploaded ads</span>
+                </span>
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                  <input
+                    type="checkbox"
+                    checked={adSetsActiveOnly}
+                    onChange={(e) => setAdSetsActiveOnly(e.target.checked)}
+                  />
+                  Active only
+                </label>
+                <button
+                  onClick={() => utils.meta.getAdSets.invalidate()}
+                  className="ml-auto px-2 py-1 text-[10px] rounded transition-colors"
+                  style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-muted)" }}
+                  title="Re-query Meta for current ad set + campaign statuses (busts 5-min cache)"
+                >
+                  ↻ Refresh statuses
+                </button>
+              </div>
+
+              {adSetGroups.length === 0 && (
+                <div className="px-8 py-16 text-center" style={{ color: "var(--text-muted)" }}>
+                  <p style={{ fontSize: 13 }}>No ad sets match the current filter.</p>
+                  <p style={{ fontSize: 11, marginTop: 6 }}>
+                    {adSetsActiveOnly
+                      ? "Toggle off 'Active only' to see all ad sets with uploaded ads."
+                      : "No uploaded ads have ad set assignments."}
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2">
               {adSetGroups.map((group) => {
                 // Distinct destination URLs across this set
                 const urls = [...new Set(group.ads.map((a) => a.destinationUrl).filter(Boolean))] as string[];
@@ -2415,12 +2457,26 @@ export default function Home() {
                   >
                     <div className="flex items-center gap-3 mb-2">
                       <div className="flex-1 min-w-0">
-                        <div
-                          className="font-mono text-[12px] font-semibold truncate"
-                          style={{ color: "var(--text-primary)" }}
-                          title={group.adSetName}
-                        >
-                          {group.adSetName}
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span
+                            className="font-mono text-[10px] font-bold uppercase"
+                            style={{
+                              padding: "2px 6px",
+                              borderRadius: 3,
+                              background: group.isActive ? "rgba(74,222,128,0.1)" : "rgba(148,163,184,0.1)",
+                              color: group.isActive ? "#4ade80" : "#94a3b8",
+                              border: `1px solid ${group.isActive ? "rgba(74,222,128,0.2)" : "rgba(148,163,184,0.2)"}`,
+                            }}
+                          >
+                            {group.isActive ? "● Active" : "○ Inactive"}
+                          </span>
+                          <span
+                            className="font-mono text-[12px] font-semibold truncate"
+                            style={{ color: "var(--text-primary)", minWidth: 0 }}
+                            title={group.adSetName}
+                          >
+                            {group.adSetName}
+                          </span>
                         </div>
                         <div className="flex items-center gap-3 mt-0.5" style={{ fontSize: 10, color: "var(--text-muted)" }}>
                           <span><strong style={{ color: "var(--text-secondary)" }}>{group.ads.length}</strong> ads</span>
@@ -2461,6 +2517,7 @@ export default function Home() {
                   </div>
                 );
               })}
+              </div>
             </div>
           );
         })()}
