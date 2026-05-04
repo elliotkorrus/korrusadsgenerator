@@ -372,7 +372,7 @@ async function uploadImageToMeta(
 
 // ── Step 1b: Upload Video (chunked for large files) ─────────────────
 
-const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB chunks
+const CHUNK_SIZE = 16 * 1024 * 1024; // 16MB chunks (Meta accepts up to ~100MB; 16 keeps memory + retry cost reasonable while ~4x fewer HTTP roundtrips than 4MB)
 
 async function uploadVideoToMeta(
   adAccountId: string,
@@ -481,10 +481,13 @@ async function uploadVideoChunked(
 
 /** Poll Meta until video processing is complete */
 async function waitForVideoReady(videoId: string, accessToken: string): Promise<void> {
-  let attempts = 0;
-  const maxAttempts = 60; // 10 minutes max
-  while (attempts < maxAttempts) {
-    await new Promise((r) => setTimeout(r, 10000)); // 10s intervals
+  // Poll every 2s for the first 30s (most videos finish here), then back off
+  // to 5s. Cap total wait at 10 min, same as before.
+  const startedAt = Date.now();
+  const MAX_MS = 10 * 60 * 1000;
+  while (Date.now() - startedAt < MAX_MS) {
+    const interval = Date.now() - startedAt < 30_000 ? 2000 : 5000;
+    await new Promise((r) => setTimeout(r, interval));
     const statusRes = await fetch(
       `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
     );
@@ -493,7 +496,6 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
     if (statusData.status?.video_status === "error") {
       throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
     }
-    attempts++;
   }
   throw new Error("Video processing timed out after 10 minutes");
 }
