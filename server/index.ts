@@ -11,6 +11,7 @@ import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
+import { uploadState } from "./upload-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploads");
@@ -575,22 +576,30 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
 
 // ─── Send to Meta (batch — groups by concept automatically) ──────────
 // Returns immediately, uploads run in background. Frontend polls status.
-let activeUploadPromise: Promise<any> | null = null;
-
 app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
   const { adIds } = req.body as { adIds?: number[] };
 
-  // Prevent concurrent uploads
-  if (activeUploadPromise) {
-    res.status(409).json({ success: false, error: "An upload is already in progress. Wait for it to complete." });
-    return;
+  // Auto-reset stale uploads (in case a prior upload wedged on a hung
+  // Meta fetch and the finally block never ran).
+  if (uploadState.isActive()) {
+    if (uploadState.isStale()) {
+      logger.warn("Auto-resetting stale upload", { elapsedMs: uploadState.elapsedMs() });
+      uploadState.clear();
+    } else {
+      const elapsedSec = Math.round(uploadState.elapsedMs() / 1000);
+      res.status(409).json({
+        success: false,
+        error: `An upload is already in progress (${elapsedSec}s elapsed). Wait for it to complete, or click "Reset Stuck" if it's hung.`,
+        elapsedMs: uploadState.elapsedMs(),
+      });
+      return;
+    }
   }
 
   // Respond immediately — uploads happen in background
   res.json({ success: true, message: "Upload started. Ads will update as they complete.", meta: { total: 0, success: 0, failed: 0 } });
 
-  // Run uploads in background with concurrency tracking
-  activeUploadPromise = (async () => {
+  uploadState.set((async () => {
     try {
       if (adIds && adIds.length > 0) {
         await uploadAdsBatch(adIds);
@@ -600,9 +609,9 @@ app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
     } catch (err: any) {
       logger.error("Background Meta upload error", { error: err.message });
     } finally {
-      activeUploadPromise = null;
+      uploadState.clear();
     }
-  })();
+  })());
 });
 
 // ─── Upload Progress SSE endpoint ────────────────────────────────────
@@ -693,10 +702,11 @@ async function gracefulShutdown(signal: string) {
   }
 
   // Wait for active upload to finish (up to 30s)
-  if (activeUploadPromise) {
+  const activePromise = uploadState.getPromise();
+  if (activePromise) {
     logger.info("Waiting for active upload to complete (30s max)");
     await Promise.race([
-      activeUploadPromise,
+      activePromise,
       new Promise((r) => setTimeout(r, 30000)),
     ]);
   }

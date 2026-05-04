@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, desc, sql, inArray } from "drizzle-orm";
 import { db, schema } from "./db.js";
 import { generateAdName, parseAdName } from "../shared/naming.js";
+import { uploadState } from "./upload-state.js";
 
 const t = initTRPC.create();
 const publicProcedure = t.procedure;
@@ -416,6 +417,10 @@ const uploadQueueRouter = t.router({
   // Reset stuck "uploading" rows back to "ready" (recovery from server crashes)
   resetStuck: publicProcedure
     .mutation(async () => {
+      // Clear the in-memory upload guard so the next "Send to Meta" isn't
+      // rejected with "An upload is already in progress" when a prior
+      // upload wedged on a hung Meta fetch.
+      uploadState.clear();
       const result = await db.update(schema.uploadQueue)
         .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
         .where(eq(schema.uploadQueue.status, "uploading"))
