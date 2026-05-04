@@ -1431,9 +1431,6 @@ export default function Home() {
       toast.warning("No source ads", "Nothing to duplicate.");
       return;
     }
-    if (!confirm(
-      `Duplicate ${duplicateSourceAdIds.length} ad${duplicateSourceAdIds.length !== 1 ? "s" : ""} with new URL?\nNew ads will be PAUSED in Meta so you can review.`
-    )) return;
 
     setDuplicateBusy(true);
     setDuplicateProgress({ completed: 0, total: duplicateSourceAdIds.length });
