@@ -1714,6 +1714,267 @@ export async function addAdAssets(
   }
 }
 
+// ── Duplicate live ads with a new destination URL ───────────────────
+//
+// For each source ad, creates a new creative with the same content but
+// a new URL (and optionally new CTA / name suffix), then creates a new
+// ad in the same ad set. New ads are created PAUSED so the user can
+// review before launching. Inserts duplicate rows into our DB.
+
+interface DuplicateAdResult {
+  sourceAdId: number;
+  sourceMetaAdId: string;
+  success: boolean;
+  newMetaAdId?: string;
+  newCreativeId?: string;
+  newRowId?: number;
+  error?: string;
+}
+
+interface DuplicateOptions {
+  newDestinationUrl: string;
+  nameSuffix?: string;        // e.g. "_LP-B" — appended to ad name
+  newCta?: string;            // optional CTA override
+}
+
+export async function duplicateAdsWithNewUrl(
+  sourceAdIds: number[],
+  options: DuplicateOptions
+): Promise<{
+  results: DuplicateAdResult[];
+  meta: { total: number; success: number; failed: number };
+}> {
+  if (!options.newDestinationUrl) throw new Error("newDestinationUrl is required");
+  if (!sourceAdIds.length) throw new Error("No source ads provided");
+
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken || !settings?.adAccountId) {
+    throw new Error("Meta Settings not configured.");
+  }
+  const accessToken = settings.accessToken;
+  const adAccountId = normalizeAdAccountId(settings.adAccountId);
+
+  // Load source ads (only those uploaded to Meta)
+  const sources = await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(inArray(schema.uploadQueue.id, sourceAdIds));
+  const uploadedSources = sources.filter((s) => s.metaAdId && s.status === "uploaded");
+
+  // Group by conceptKey so we duplicate ONE creative per concept group
+  // (each concept group is a single Meta ad with multiple sizes via asset_feed_spec).
+  const conceptMap = new Map<string, typeof uploadedSources>();
+  for (const ad of uploadedSources) {
+    const key = ad.conceptKey || `solo_${ad.id}`;
+    if (!conceptMap.has(key)) conceptMap.set(key, []);
+    conceptMap.get(key)!.push(ad);
+  }
+
+  const results: DuplicateAdResult[] = [];
+
+  for (const [conceptKey, rows] of conceptMap) {
+    const primary = rows[0];
+    if (!primary.metaAdId || !primary.adSetId) {
+      results.push({
+        sourceAdId: primary.id,
+        sourceMetaAdId: primary.metaAdId || "",
+        success: false,
+        error: "Source ad missing metaAdId or adSetId",
+      });
+      continue;
+    }
+
+    try {
+      // Step 1: Fetch source creative spec
+      const adRes = await fetch(
+        `${META_BASE}/${primary.metaAdId}?fields=creative{id,object_story_spec,asset_feed_spec,name,url_tags}&access_token=${encodeURIComponent(accessToken)}`
+      );
+      const adData = await adRes.json();
+      if (adData.error) throw new Error(`Failed to fetch source ad: ${adData.error.message}`);
+      const oldCreative = adData.creative;
+      if (!oldCreative) throw new Error("Source ad has no creative");
+
+      // Step 2: Build new creative spec with new URL (and optional new CTA)
+      const suffix = options.nameSuffix || "_v2";
+      const newName = `${oldCreative.name || primary.generatedAdName}${suffix}`;
+      const newCreativeBody: Record<string, any> = {
+        name: newName,
+        access_token: accessToken,
+      };
+
+      if (oldCreative.asset_feed_spec) {
+        const spec = typeof oldCreative.asset_feed_spec === "string"
+          ? JSON.parse(oldCreative.asset_feed_spec)
+          : oldCreative.asset_feed_spec;
+
+        if (Array.isArray(spec.link_urls)) {
+          spec.link_urls = spec.link_urls.map((u: any) => ({
+            ...u,
+            website_url: options.newDestinationUrl,
+          }));
+        }
+        if (options.newCta && Array.isArray(spec.call_to_action_types)) {
+          spec.call_to_action_types = [options.newCta];
+        }
+
+        const minimalStorySpec = typeof oldCreative.object_story_spec === "string"
+          ? JSON.parse(oldCreative.object_story_spec)
+          : (oldCreative.object_story_spec || {});
+        newCreativeBody.object_story_spec = JSON.stringify({
+          page_id: minimalStorySpec.page_id,
+          instagram_user_id: minimalStorySpec.instagram_user_id,
+        });
+        newCreativeBody.asset_feed_spec = JSON.stringify(spec);
+      } else if (oldCreative.object_story_spec) {
+        const spec = typeof oldCreative.object_story_spec === "string"
+          ? JSON.parse(oldCreative.object_story_spec)
+          : oldCreative.object_story_spec;
+
+        if (spec.video_data) {
+          if (spec.video_data.call_to_action?.value) {
+            spec.video_data.call_to_action.value.link = options.newDestinationUrl;
+          }
+          if (options.newCta && spec.video_data.call_to_action) {
+            spec.video_data.call_to_action.type = options.newCta;
+          }
+        }
+        if (spec.link_data) {
+          spec.link_data.link = options.newDestinationUrl;
+          if (spec.link_data.call_to_action?.value) {
+            spec.link_data.call_to_action.value.link = options.newDestinationUrl;
+          }
+          if (options.newCta && spec.link_data.call_to_action) {
+            spec.link_data.call_to_action.type = options.newCta;
+          }
+        }
+        newCreativeBody.object_story_spec = JSON.stringify(spec);
+      } else {
+        throw new Error("Source creative has neither asset_feed_spec nor object_story_spec");
+      }
+
+      if (oldCreative.url_tags) newCreativeBody.url_tags = oldCreative.url_tags;
+
+      // Step 3: Create new creative
+      const createCreativeRes = await fetch(`${META_BASE}/act_${adAccountId}/adcreatives`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newCreativeBody),
+      });
+      const createCreativeData = await createCreativeRes.json();
+      if (createCreativeData.error) {
+        throw new Error(`Create creative failed: ${createCreativeData.error.message}`);
+      }
+      const newCreativeId = createCreativeData.id;
+      if (!newCreativeId) throw new Error("No creative ID returned");
+
+      // Step 4: Create new ad in the same ad set, status PAUSED
+      const createAdRes = await fetch(`${META_BASE}/act_${adAccountId}/ads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          adset_id: primary.adSetId,
+          creative: { creative_id: newCreativeId },
+          status: "PAUSED",
+          access_token: accessToken,
+        }),
+      });
+      const createAdData = await createAdRes.json();
+      if (createAdData.error) throw new Error(`Create ad failed: ${createAdData.error.message}`);
+      const newMetaAdId = createAdData.id;
+      if (!newMetaAdId) throw new Error("No ad ID returned");
+
+      // Step 5: Insert duplicate rows in the DB (one per source row in the concept)
+      const newConceptKey = `${conceptKey}__dup_${Date.now()}`;
+      let firstNewRowId: number | undefined;
+      for (const sourceRow of rows) {
+        const inserted = await db.insert(schema.uploadQueue).values({
+          brand: sourceRow.brand,
+          initiative: sourceRow.initiative,
+          variation: sourceRow.variation,
+          angle: sourceRow.angle,
+          source: sourceRow.source,
+          product: sourceRow.product,
+          contentType: sourceRow.contentType,
+          creativeType: sourceRow.creativeType,
+          dimensions: sourceRow.dimensions,
+          copySlug: sourceRow.copySlug,
+          filename: sourceRow.filename,
+          date: sourceRow.date,
+          adSetId: sourceRow.adSetId,
+          adSetName: sourceRow.adSetName,
+          destinationUrl: options.newDestinationUrl,
+          headline: sourceRow.headline,
+          bodyCopy: sourceRow.bodyCopy,
+          agency: sourceRow.agency,
+          handle: sourceRow.handle,
+          cta: options.newCta || sourceRow.cta,
+          displayUrl: sourceRow.displayUrl,
+          pageId: sourceRow.pageId,
+          instagramAccountId: sourceRow.instagramAccountId,
+          conceptKey: newConceptKey,
+          generatedAdName: newName,
+          status: "uploaded",
+          metaAdId: newMetaAdId,
+          metaCreativeId: newCreativeId,
+          errorMessage: null,
+          uploadedAt: new Date().toISOString(),
+          fileUrl: sourceRow.fileUrl,
+          fileKey: sourceRow.fileKey,
+          fileMimeType: sourceRow.fileMimeType,
+          fileSize: sourceRow.fileSize,
+        }).returning();
+        if (!firstNewRowId && inserted[0]) firstNewRowId = inserted[0].id;
+      }
+
+      // Audit log
+      try {
+        await db.insert(schema.auditLog).values({
+          action: "duplicate_ad_with_new_url",
+          entityType: "ad",
+          entityId: newMetaAdId,
+          details: JSON.stringify({
+            sourceConceptKey: conceptKey,
+            sourceAdId: primary.id,
+            sourceMetaAdId: primary.metaAdId,
+            newConceptKey,
+            newMetaAdId,
+            newCreativeId,
+            newDestinationUrl: options.newDestinationUrl,
+            nameSuffix: suffix,
+          }),
+        });
+      } catch {}
+
+      results.push({
+        sourceAdId: primary.id,
+        sourceMetaAdId: primary.metaAdId,
+        success: true,
+        newMetaAdId,
+        newCreativeId,
+        newRowId: firstNewRowId,
+      });
+    } catch (err: any) {
+      results.push({
+        sourceAdId: primary.id,
+        sourceMetaAdId: primary.metaAdId || "",
+        success: false,
+        error: err.message || String(err),
+      });
+    }
+  }
+
+  return {
+    results,
+    meta: {
+      total: results.length,
+      success: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    },
+  };
+}
+
 // ── Pause / resume ads in Meta ──────────────────────────────────────
 //
 // Sets each ad's status to PAUSED or ACTIVE via the Meta API.

@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 
@@ -381,6 +381,91 @@ app.get("/api/set-ad-status/status", (_req, res) => {
     active: true,
     ...activeStatusJob,
     elapsedMs: Date.now() - activeStatusJob.startedAt,
+  });
+});
+
+// ─── Duplicate ads with new URL (async with progress) ───────────────
+let activeDuplicateJob: {
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  errors: Array<{ adId: number; error: string }>;
+  done: boolean;
+  startedAt: number;
+} | null = null;
+
+app.post("/api/duplicate-ads-with-url", express.json(), async (req, res) => {
+  const { sourceAdIds, newDestinationUrl, nameSuffix, newCta } = req.body as {
+    sourceAdIds?: number[];
+    newDestinationUrl?: string;
+    nameSuffix?: string;
+    newCta?: string;
+  };
+  if (!Array.isArray(sourceAdIds) || sourceAdIds.length === 0) {
+    res.status(400).json({ success: false, error: "sourceAdIds (array) required" });
+    return;
+  }
+  if (!newDestinationUrl || typeof newDestinationUrl !== "string") {
+    res.status(400).json({ success: false, error: "newDestinationUrl required" });
+    return;
+  }
+  if (activeDuplicateJob && !activeDuplicateJob.done) {
+    res.status(409).json({ success: false, error: "A duplicate job is already running. Wait for it to finish." });
+    return;
+  }
+
+  activeDuplicateJob = {
+    total: sourceAdIds.length,
+    completed: 0,
+    success: 0,
+    failed: 0,
+    errors: [],
+    done: false,
+    startedAt: Date.now(),
+  };
+
+  res.json({ success: true, message: "Duplicate started", total: sourceAdIds.length });
+
+  (async () => {
+    try {
+      // Process in chunks of 5 so progress updates feel responsive
+      const CHUNK = 5;
+      for (let i = 0; i < sourceAdIds.length; i += CHUNK) {
+        const slice = sourceAdIds.slice(i, i + CHUNK);
+        const result = await duplicateAdsWithNewUrl(slice, {
+          newDestinationUrl,
+          nameSuffix,
+          newCta,
+        });
+        activeDuplicateJob!.completed += slice.length;
+        activeDuplicateJob!.success += result.meta.success;
+        activeDuplicateJob!.failed += result.meta.failed;
+        for (const r of result.results) {
+          if (!r.success && r.error) {
+            activeDuplicateJob!.errors.push({ adId: r.sourceAdId, error: r.error });
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.error("Background duplicate failed", { error: err.message });
+      activeDuplicateJob!.errors.push({ adId: 0, error: err.message });
+      activeDuplicateJob!.failed = activeDuplicateJob!.total - activeDuplicateJob!.success;
+    } finally {
+      activeDuplicateJob!.done = true;
+    }
+  })();
+});
+
+app.get("/api/duplicate-ads-with-url/status", (_req, res) => {
+  if (!activeDuplicateJob) {
+    res.json({ active: false });
+    return;
+  }
+  res.json({
+    active: true,
+    ...activeDuplicateJob,
+    elapsedMs: Date.now() - activeDuplicateJob.startedAt,
   });
 });
 

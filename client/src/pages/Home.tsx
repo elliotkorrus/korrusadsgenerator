@@ -54,12 +54,14 @@ const FOCUS_VIEWS = [
   { key: "inbox", label: "Inbox", desc: "New & drafts", statuses: ["draft"] },
   { key: "queue", label: "Queue", desc: "Ready to upload", statuses: ["ready", "uploading"] },
   { key: "live", label: "Live", desc: "In Meta", statuses: ["uploaded", "error"] },
+  { key: "adsets", label: "Ad Sets", desc: "Group by ad set", statuses: ["uploaded"] },
 ] as const;
 
 const FOCUS_VIEW_EMPTY: Record<string, { icon: string; title: string; message: string }> = {
   inbox: { icon: "tray", title: "Drop creatives here", message: "Drag and drop files anywhere on this page. They'll appear instantly in the spreadsheet." },
   queue: { icon: "send", title: "Nothing queued", message: "Mark drafts as Ready in the Inbox to move them here." },
   live: { icon: "globe", title: "No ads uploaded yet", message: "Send ready creatives from the Queue." },
+  adsets: { icon: "globe", title: "No ad sets yet", message: "Upload ads to Meta to see ad-set groupings." },
 };
 
 const ALL_DIMS = ["9:16", "4:5", "1:1", "16:9"] as const;
@@ -1397,6 +1399,94 @@ export default function Home() {
   const [pausingAds, setPausingAds] = useState<null | "PAUSED" | "ACTIVE">(null);
   const [pauseProgress, setPauseProgress] = useState<{ completed: number; total: number } | null>(null);
 
+  // Duplicate-with-new-URL state
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [duplicateSourceAdIds, setDuplicateSourceAdIds] = useState<number[]>([]);
+  const [duplicateSourceLabel, setDuplicateSourceLabel] = useState<string>("");
+  const [duplicateUrl, setDuplicateUrl] = useState("");
+  const [duplicateNameSuffix, setDuplicateNameSuffix] = useState("_v2");
+  const [duplicateBusy, setDuplicateBusy] = useState(false);
+  const [duplicateProgress, setDuplicateProgress] = useState<{ completed: number; total: number } | null>(null);
+
+  function openDuplicateDialog(sourceAdIds: number[], label: string) {
+    setDuplicateSourceAdIds(sourceAdIds);
+    setDuplicateSourceLabel(label);
+    setDuplicateUrl("");
+    setDuplicateNameSuffix("_v2");
+    setShowDuplicateDialog(true);
+  }
+
+  async function applyDuplicate() {
+    const url = duplicateUrl.trim();
+    if (!url) {
+      toast.warning("URL required", "Enter a destination URL.");
+      return;
+    }
+    if (duplicateSourceAdIds.length === 0) {
+      toast.warning("No source ads", "Nothing to duplicate.");
+      return;
+    }
+    if (!confirm(
+      `Duplicate ${duplicateSourceAdIds.length} ad${duplicateSourceAdIds.length !== 1 ? "s" : ""} with new URL?\nNew ads will be PAUSED in Meta so you can review.`
+    )) return;
+
+    setDuplicateBusy(true);
+    setDuplicateProgress({ completed: 0, total: duplicateSourceAdIds.length });
+    const token = localStorage.getItem("app-token");
+    const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
+
+    try {
+      const res = await fetch("/api/duplicate-ads-with-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          sourceAdIds: duplicateSourceAdIds,
+          newDestinationUrl: url,
+          nameSuffix: duplicateNameSuffix || "_v2",
+        }),
+      });
+      const startData = await res.json();
+      if (!res.ok || !startData.success) throw new Error(startData.error || "Failed to start");
+
+      let finalSuccess = 0;
+      let finalFailed = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const statusRes = await fetch("/api/duplicate-ads-with-url/status", { headers: authHeaders });
+        if (!statusRes.ok) throw new Error("Lost connection to server");
+        const status = await statusRes.json();
+        if (!status.active) break;
+        setDuplicateProgress({
+          completed: status.completed || 0,
+          total: status.total || duplicateSourceAdIds.length,
+        });
+        if (status.done) {
+          finalSuccess = status.success || 0;
+          finalFailed = status.failed || 0;
+          break;
+        }
+      }
+      if (finalFailed > 0) {
+        toast.warning(
+          `${finalSuccess}/${finalSuccess + finalFailed} duplicated`,
+          `${finalFailed} failed. The new ads are PAUSED in Meta — review and resume when ready.`
+        );
+      } else {
+        toast.success(
+          `${finalSuccess} ad${finalSuccess !== 1 ? "s" : ""} duplicated`,
+          `New ads are PAUSED in Meta. Resume them when ready.`
+        );
+      }
+      setShowDuplicateDialog(false);
+      utils.queue.list.invalidate();
+    } catch (err: any) {
+      toast.error("Duplicate failed", err.message || String(err));
+    } finally {
+      setDuplicateBusy(false);
+      setDuplicateProgress(null);
+    }
+  }
+
   // Asset replacement state
   const [showReplaceAssetsDialog, setShowReplaceAssetsDialog] = useState(false);
   const [replaceAssetsConceptKey, setReplaceAssetsConceptKey] = useState<string | null>(null);
@@ -2276,8 +2366,94 @@ export default function Home() {
           );
         })()}
 
+        {/* Ad Sets view — group all uploaded ads by adSetId */}
+        {focusView === "adsets" && (() => {
+          const uploadedAds = allItems.filter((i) => i.status === "uploaded" && i.metaAdId);
+          if (uploadedAds.length === 0) return null;
+          // Group by adSetId
+          const adSetMap = new Map<string, { adSetId: string; adSetName: string; ads: typeof uploadedAds }>();
+          for (const ad of uploadedAds) {
+            const key = ad.adSetId || "__no_ad_set__";
+            if (!adSetMap.has(key)) {
+              adSetMap.set(key, {
+                adSetId: ad.adSetId || "",
+                adSetName: ad.adSetName || (ad.adSetId ? ad.adSetId : "Unassigned"),
+                ads: [],
+              });
+            }
+            adSetMap.get(key)!.ads.push(ad);
+          }
+          const adSetGroups = [...adSetMap.values()].sort((a, b) => a.adSetName.localeCompare(b.adSetName));
+          return (
+            <div className="p-4 space-y-2">
+              {adSetGroups.map((group) => {
+                // Distinct destination URLs across this set
+                const urls = [...new Set(group.ads.map((a) => a.destinationUrl).filter(Boolean))] as string[];
+                // Distinct concept count
+                const conceptKeys = new Set(group.ads.map((a) => a.conceptKey || `solo_${a.id}`));
+                return (
+                  <div
+                    key={group.adSetId || group.adSetName}
+                    className="rounded p-3"
+                    style={{
+                      background: "var(--surface-1)",
+                      border: "1px solid var(--surface-2)",
+                    }}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className="font-mono text-[12px] font-semibold truncate"
+                          style={{ color: "var(--text-primary)" }}
+                          title={group.adSetName}
+                        >
+                          {group.adSetName}
+                        </div>
+                        <div className="flex items-center gap-3 mt-0.5" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                          <span><strong style={{ color: "var(--text-secondary)" }}>{group.ads.length}</strong> ads</span>
+                          <span><strong style={{ color: "var(--text-secondary)" }}>{conceptKeys.size}</strong> concepts</span>
+                          {group.adSetId && (
+                            <span className="font-mono" style={{ color: "var(--text-muted)" }}>{group.adSetId}</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          // Pass one source ad per concept (the function will fetch siblings via conceptKey)
+                          const ids = group.ads.map((a) => a.id);
+                          openDuplicateDialog(ids, group.adSetName);
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold rounded transition-colors flex-shrink-0"
+                        style={{ background: "rgba(168,139,250,0.1)", color: "#a78bfa", border: "1px solid rgba(168,139,250,0.3)" }}
+                        title="Duplicate every ad in this ad set with a new destination URL"
+                      >
+                        ⎘ Duplicate with New URL
+                      </button>
+                    </div>
+                    {/* Destination URL summary */}
+                    <div className="text-[10px] flex items-center gap-2 flex-wrap" style={{ color: "var(--text-muted)" }}>
+                      <span>Current URLs:</span>
+                      {urls.length === 0 && <span style={{ color: "var(--text-muted)" }}>(none)</span>}
+                      {urls.map((url) => (
+                        <span
+                          key={url}
+                          className="font-mono px-1.5 py-0.5 rounded"
+                          style={{ background: "var(--surface-2)", color: "var(--text-secondary)" }}
+                          title={url}
+                        >
+                          {url.length > 60 ? url.slice(0, 58) + "…" : url}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* Feature 2: Card view */}
-        {viewMode === "card" && filteredGrouped.length > 0 && (
+        {viewMode === "card" && focusView !== "adsets" && filteredGrouped.length > 0 && (
           <div className="p-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredGrouped.map((group) => {
@@ -2324,7 +2500,7 @@ export default function Home() {
         )}
 
         {/* Pipeline view */}
-        {viewMode === "pipeline" && (
+        {viewMode === "pipeline" && focusView !== "adsets" && (
           <PipelineView
             groups={grouped}
             onUpdateStatus={(ids, status) => bulkStatusMut.mutate({ ids, status })}
@@ -2334,7 +2510,7 @@ export default function Home() {
         )}
 
         {/* Spreadsheet view (inbox) */}
-        {viewMode === "table" && focusView === "inbox" && (filteredGrouped.length > 0 || pendingRows.length > 0) && (
+        {viewMode === "table" && focusView === "inbox" && focusView !== "adsets" && (filteredGrouped.length > 0 || pendingRows.length > 0) && (
           <SpreadsheetInbox
             groups={filteredGrouped}
             pendingRows={pendingRows}
@@ -2354,7 +2530,7 @@ export default function Home() {
         )}
 
         {/* Table view (queue/live — keep old table for non-inbox views) */}
-        {viewMode === "table" && focusView !== "inbox" && filteredGrouped.length > 0 && (
+        {viewMode === "table" && focusView !== "inbox" && focusView !== "adsets" && filteredGrouped.length > 0 && (
           <div className="min-w-max" style={{ borderBottom: "1px solid var(--surface-3)" }}>
             <table className="w-full text-xs border-collapse">
               <thead
@@ -3337,6 +3513,120 @@ export default function Home() {
                     </button>
                   );
                 })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Duplicate ads with new URL dialog */}
+      {showDuplicateDialog && (() => {
+        const labelStyle: React.CSSProperties = {
+          color: "var(--text-muted)",
+          letterSpacing: "0.08em",
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: "uppercase",
+        };
+        const inputStyle: React.CSSProperties = {
+          background: "var(--surface-2)",
+          border: "1px solid var(--surface-3)",
+          color: "var(--text-primary)",
+        };
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.6)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+            onClick={() => !duplicateBusy && setShowDuplicateDialog(false)}
+          >
+            <div
+              className="rounded-md p-5 w-[520px] max-w-[90vw] max-h-[85vh] overflow-y-auto"
+              style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+                Duplicate Ads with New URL
+              </h2>
+              <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
+                Will duplicate {duplicateSourceAdIds.length} ad{duplicateSourceAdIds.length !== 1 ? "s" : ""} from
+                {" "}<span style={{ fontFamily: "'IBM Plex Mono', monospace", color: "var(--text-secondary)" }}>{duplicateSourceLabel}</span>.
+                New ads land <strong>PAUSED</strong> in Meta — review and resume when ready.
+              </p>
+
+              <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>New Destination URL</label>
+              <input
+                type="url"
+                value={duplicateUrl}
+                onChange={(e) => setDuplicateUrl(e.target.value)}
+                placeholder="https://www.korrus.com/products/oio-bulb"
+                disabled={duplicateBusy}
+                className="w-full px-2.5 py-1.5 text-xs rounded focus:outline-none mb-3"
+                style={inputStyle}
+                autoFocus
+              />
+
+              <label style={{ ...labelStyle, display: "block", marginBottom: 6 }}>
+                Name suffix (helps tell duplicates apart in Meta)
+              </label>
+              <input
+                type="text"
+                value={duplicateNameSuffix}
+                onChange={(e) => setDuplicateNameSuffix(e.target.value)}
+                placeholder="_v2"
+                disabled={duplicateBusy}
+                className="w-full px-2.5 py-1.5 text-xs rounded focus:outline-none mb-4"
+                style={inputStyle}
+                maxLength={32}
+              />
+
+              {duplicateProgress && (
+                <div className="mb-3" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                  {duplicateProgress.completed}/{duplicateProgress.total} processed
+                  <div
+                    style={{
+                      height: 4,
+                      background: "var(--surface-3)",
+                      borderRadius: 2,
+                      overflow: "hidden",
+                      marginTop: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        background: "#a78bfa",
+                        width: `${duplicateProgress.total > 0 ? (duplicateProgress.completed / duplicateProgress.total) * 100 : 0}%`,
+                        transition: "width 0.3s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowDuplicateDialog(false)}
+                  disabled={duplicateBusy}
+                  className="px-3 py-1.5 text-xs rounded transition-colors"
+                  style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyDuplicate}
+                  disabled={duplicateBusy || !duplicateUrl.trim()}
+                  className="px-3 py-1.5 text-xs font-semibold rounded transition-colors"
+                  style={{
+                    background: duplicateBusy || !duplicateUrl.trim() ? "#7c3aed" : "#a78bfa",
+                    color: "white",
+                    opacity: duplicateBusy || !duplicateUrl.trim() ? 0.6 : 1,
+                    cursor: duplicateBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {duplicateBusy
+                    ? `Duplicating ${duplicateProgress?.completed || 0}/${duplicateSourceAdIds.length}…`
+                    : `Duplicate ${duplicateSourceAdIds.length} ad${duplicateSourceAdIds.length !== 1 ? "s" : ""}`}
+                </button>
               </div>
             </div>
           </div>
