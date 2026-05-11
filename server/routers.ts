@@ -1023,9 +1023,15 @@ const metaSettingsRouter = t.router({
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           console.error("Meta getAdSets failed:", res.status, errText);
-          break;
+          // Throw so tRPC surfaces the error to the client and the picker
+          // falls back to manual ID entry — instead of silently returning
+          // an empty list that looks like "no ad sets exist".
+          throw new Error(`Meta returned ${res.status}: ${errText.slice(0, 200) || "no body"}`);
         }
         const data: any = await res.json();
+        if (data.error) {
+          throw new Error(`Meta API error: ${data.error.message || JSON.stringify(data.error)}`);
+        }
         const items = (data.data || [])
           .filter((s: any) => {
             if (s.status !== "ACTIVE") return false;
@@ -1046,8 +1052,13 @@ const metaSettingsRouter = t.router({
         url = data.paging?.next || null;
       }
 
-      adSetsCache.data = allAdSets;
-      adSetsCache.fetchedAt = now;
+      // Only cache non-empty results. An empty array probably means a
+      // transient Meta hiccup or a filter that didn't match anything; we
+      // don't want that to stick for 5 minutes.
+      if (allAdSets.length > 0) {
+        adSetsCache.data = allAdSets;
+        adSetsCache.fetchedAt = now;
+      }
       return allAdSets;
     } catch (err: any) {
       console.error("Meta getAdSets error:", err?.message || err);
