@@ -23,16 +23,51 @@ async function detectImageDimensions(file: File): Promise<{ ratio: string | null
       URL.revokeObjectURL(url);
       const w = img.width;
       const h = img.height;
-      const ratio = w / h;
-      let detected: string | null = null;
-      if (Math.abs(ratio - 9 / 16) < 0.08) detected = "9:16";
-      else if (Math.abs(ratio - 4 / 5) < 0.08) detected = "4:5";
-      else if (Math.abs(ratio - 1 / 1) < 0.08) detected = "1:1";
-      else if (Math.abs(ratio - 16 / 9) < 0.08) detected = "16:9";
-      resolve({ ratio: detected, width: w, height: h });
+      resolve({ ratio: classifyRatio(w, h), width: w, height: h });
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
+  });
+}
+
+// Classify a width/height into a standard ad ratio (shared by image + video detection)
+function classifyRatio(w: number, h: number): string | null {
+  if (!w || !h) return null;
+  const ratio = w / h;
+  if (Math.abs(ratio - 9 / 16) < 0.08) return "9:16";
+  if (Math.abs(ratio - 4 / 5) < 0.08) return "4:5";
+  if (Math.abs(ratio - 1 / 1) < 0.08) return "1:1";
+  if (Math.abs(ratio - 16 / 9) < 0.08) return "16:9";
+  return null;
+}
+
+// Detect a video's true dimensions by decoding its metadata in the browser.
+// Mirrors detectImageDimensions; falls back to null if the browser can't
+// decode the container (e.g. some .avi/.mkv), in which case the caller keeps
+// the filename-based heuristic.
+async function detectVideoDimensionsFromFile(file: File): Promise<{ ratio: string | null; width: number; height: number } | null> {
+  if (!file.type.startsWith("video/")) return null;
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (result: { ratio: string | null; width: number; height: number } | null) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      resolve(result);
+    };
+    video.preload = "metadata";
+    video.muted = true;
+    video.onloadedmetadata = () => {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      finish(w && h ? { ratio: classifyRatio(w, h), width: w, height: h } : null);
+    };
+    video.onerror = () => finish(null);
+    // Guard against videos that never fire metadata (corrupt/unsupported)
+    setTimeout(() => finish(null), 8000);
+    video.src = url;
   });
 }
 
@@ -42,7 +77,7 @@ function computeWarnings(file: File, dimResult: { ratio: string | null; width: n
   const GB = 1024 * MB;
   if (file.type.startsWith("image/") && file.size > 30 * MB) warnings.push("Too large for Meta (max 30MB)");
   if (file.type.startsWith("video/") && file.size > 4 * GB) warnings.push("Too large for Meta (max 4GB)");
-  if (file.type.startsWith("image/") && dimResult && dimResult.ratio === null) warnings.push(`Non-standard ratio (${dimResult.width}×${dimResult.height})`);
+  if (dimResult && dimResult.ratio === null) warnings.push(`Non-standard ratio (${dimResult.width}×${dimResult.height})`);
   return warnings;
 }
 
@@ -224,7 +259,9 @@ export default function BatchDropDialog({ files, onImport, onClose }: BatchDropD
     (async () => {
       const updated = await Promise.all(
         initialRows.map(async (row) => {
-          const dimResult = await detectImageDimensions(row.file);
+          const dimResult = row.file.type.startsWith("video/")
+            ? await detectVideoDimensionsFromFile(row.file)
+            : await detectImageDimensions(row.file);
           let updatedFields = { ...row.fields };
           if (dimResult?.ratio && !row.fields.dimensions) updatedFields = { ...updatedFields, dimensions: dimResult.ratio };
           const warnings = computeWarnings(row.file, dimResult);
