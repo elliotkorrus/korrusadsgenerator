@@ -40,7 +40,10 @@ export default function ReuploadToAccountDialog({ sourceAdIds, onClose, onComple
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch("/api/reupload-to-account/status");
+        const token = localStorage.getItem("app-token");
+        const res = await fetch("/api/reupload-to-account/status", {
+          headers: token ? { "x-app-token": token } : {},
+        });
         const data: JobStatus = await res.json();
         if (cancelled) return;
         setStatus(data);
