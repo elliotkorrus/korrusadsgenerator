@@ -8,9 +8,12 @@ interface AdSetPickerProps {
   onSelect: (adSetId: string, adSetName: string) => void;
   disabled?: boolean;
   compact?: boolean; // table-cell mode: smaller sizing
+  // When set, fetch ad sets from this specific account instead of the
+  // configured primary one. Used by the "Re-upload to new account" dialog.
+  accountId?: string;
 }
 
-export default function AdSetPicker({ value, displayValue, onSelect, disabled, compact }: AdSetPickerProps) {
+export default function AdSetPicker({ value, displayValue, onSelect, disabled, compact, accountId }: AdSetPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [fallbackMode, setFallbackMode] = useState(false);
@@ -18,10 +21,24 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: adSets, isLoading, isError } = trpc.meta.getAdSets.useQuery(undefined, {
+  // Primary path: pull from meta_settings.ad_account_id (cached 5 min).
+  // Override path: pull from an explicit account when `accountId` is set.
+  const primary = trpc.meta.getAdSets.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     retry: 1,
+    enabled: !accountId,
   });
+  const override = trpc.meta.getAdSetsForAccount.useQuery(
+    { accountId: accountId || "" },
+    {
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+      enabled: !!accountId,
+    }
+  );
+  const adSets = accountId ? override.data : primary.data;
+  const isLoading = accountId ? override.isLoading : primary.isLoading;
+  const isError = accountId ? override.isError : primary.isError;
 
   // Fall back to text input if API fails or returns empty
   useEffect(() => {

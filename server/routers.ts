@@ -857,6 +857,7 @@ const metaSettingsRouter = t.router({
         appSecret: z.string().optional().nullable(),
         accessToken: z.string().optional().nullable(),
         adAccountId: z.string().optional().nullable(),
+        secondaryAdAccountId: z.string().optional().nullable(),
         pageId: z.string().optional().nullable(),
         instagramUserId: z.string().optional().nullable(),
         instagramHandle: z.string().optional().nullable(),
@@ -1065,6 +1066,58 @@ const metaSettingsRouter = t.router({
       throw new Error(`Failed to load ad sets from Meta: ${err?.message || "Unknown error"}`);
     }
   }),
+
+  // Same as getAdSets but pulls from an explicitly-passed ad account.
+  // Used by the "Re-upload to new account" dialog, which needs ad sets
+  // from a DIFFERENT account than meta_settings.ad_account_id.
+  // No 5-min cache here — this is called from one dialog, not on every render.
+  getAdSetsForAccount: publicProcedure
+    .input(z.object({ accountId: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const settingsRows = await db.select().from(schema.metaSettings);
+      const settings = settingsRows[0];
+      if (!settings?.accessToken) return [];
+      const acct = input.accountId.startsWith("act_") ? input.accountId : `act_${input.accountId}`;
+      try {
+        const allAdSets: any[] = [];
+        let url: string | null = `https://graph.facebook.com/v21.0/${acct}/adsets?${new URLSearchParams({
+          fields: "id,name,status,effective_status,campaign{id,name,status}",
+          access_token: settings.accessToken,
+          limit: "200",
+        }).toString()}`;
+        while (url) {
+          const res: Response = await fetch(url);
+          if (!res.ok) {
+            const errText = await res.text().catch(() => "");
+            throw new Error(`Meta returned ${res.status}: ${errText.slice(0, 200) || "no body"}`);
+          }
+          const data: any = await res.json();
+          if (data.error) throw new Error(`Meta API error: ${data.error.message || JSON.stringify(data.error)}`);
+          const items = (data.data || [])
+            .filter((s: any) => {
+              if (s.status !== "ACTIVE") return false;
+              const cs = s.campaign?.status;
+              if (cs === "DELETED" || cs === "ARCHIVED") return false;
+              return true;
+            })
+            .map((s: any) => ({
+              id: s.id,
+              name: s.name,
+              status: s.status,
+              effectiveStatus: s.effective_status,
+              campaignId: s.campaign?.id,
+              campaignName: s.campaign?.name,
+              campaignStatus: s.campaign?.status,
+            }));
+          allAdSets.push(...items);
+          url = data.paging?.next || null;
+        }
+        return allAdSets;
+      } catch (err: any) {
+        console.error("Meta getAdSetsForAccount error:", err?.message || err);
+        throw new Error(`Failed to load ad sets from ${acct}: ${err?.message || "Unknown error"}`);
+      }
+    }),
 
   getAdInsights: publicProcedure
     .input(z.object({

@@ -2170,3 +2170,181 @@ export async function setAdStatusInMeta(
     },
   };
 }
+
+// ── Re-upload to a different account ─────────────────────────────────
+//
+// Migration helper for the "Re-upload to new account" UI: for each source
+// row, INSERT a new upload_queue row (status=ready, target adSetId,
+// migrated concept key) and run the standard upload flow against a
+// DIFFERENT ad account. Source rows are NOT mutated — they remain as
+// historical records of the old-account upload.
+export interface ReuploadResult {
+  sourceAdIds: number[];      // source rows in this concept group
+  newAdIds: number[];         // new rows inserted (one per source)
+  success: boolean;
+  metaAdId?: string;
+  metaCreativeId?: string;
+  error?: string;
+}
+
+export async function reuploadAdsToAccount(
+  sourceAdIds: number[],
+  opts: {
+    targetAdAccountId: string;   // act_<id>
+    targetAdSetId: string;
+    targetAdSetName?: string;
+  }
+): Promise<{
+  results: ReuploadResult[];
+  meta: { total: number; success: number; failed: number };
+}> {
+  if (sourceAdIds.length === 0) {
+    return { results: [], meta: { total: 0, success: 0, failed: 0 } };
+  }
+
+  // Pull token + page + IG from existing settings (user confirmed they stay
+  // the same across accounts within the same Business Manager).
+  const metaRows = await db.select().from(schema.metaSettings);
+  const metaSettings = metaRows[0];
+  if (!metaSettings?.accessToken) {
+    throw new Error("Meta Settings missing access token");
+  }
+
+  const targetMeta: MetaSettings = {
+    accessToken: metaSettings.accessToken,
+    adAccountId: normalizeAdAccountId(opts.targetAdAccountId),
+    pageId: metaSettings.pageId || "",
+    instagramUserId: metaSettings.instagramUserId || "",
+    defaultDestinationUrl: metaSettings.defaultDestinationUrl,
+    defaultDisplayUrl: metaSettings.defaultDisplayUrl,
+    defaultCta: metaSettings.defaultCta,
+    utmTemplate: metaSettings.utmTemplate,
+  };
+
+  // Load the source rows
+  const sourceRows = (await db
+    .select()
+    .from(schema.uploadQueue)
+    .where(inArray(schema.uploadQueue.id, sourceAdIds))) as QueueRow[];
+
+  if (sourceRows.length === 0) {
+    return { results: [], meta: { total: 0, success: 0, failed: 0 } };
+  }
+
+  // Group by original conceptKey so multi-size concepts re-upload as one
+  // multi-placement ad (matching the original upload's structure).
+  const groups = new Map<string, QueueRow[]>();
+  for (const r of sourceRows) {
+    const k = r.conceptKey || `solo_${r.id}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(r);
+  }
+
+  const results: ReuploadResult[] = [];
+
+  for (const [origKey, origRows] of groups) {
+    // Sort by dimensions for deterministic order (matches upload flow)
+    origRows.sort((a, b) => (a.dimensions || "").localeCompare(b.dimensions || ""));
+
+    // Insert a new row per source row. Suffix conceptKey so the new rows
+    // group together in the dashboard as a distinct migrated concept.
+    const newConceptKey = `${origKey}__migrated_${normalizeAdAccountId(opts.targetAdAccountId)}`;
+    const newRowsInserted: QueueRow[] = [];
+    const sourceIdsThisGroup: number[] = [];
+
+    try {
+      for (const src of origRows) {
+        sourceIdsThisGroup.push(src.id);
+        const inserted = await db.insert(schema.uploadQueue).values({
+          brand: src.brand,
+          initiative: src.initiative,
+          variation: src.variation,
+          angle: src.angle,
+          source: src.source,
+          product: src.product,
+          contentType: src.contentType,
+          creativeType: src.creativeType,
+          dimensions: src.dimensions,
+          copySlug: src.copySlug,
+          filename: src.filename,
+          date: src.date,
+          generatedAdName: src.generatedAdName,
+          adSetId: opts.targetAdSetId,
+          adSetName: opts.targetAdSetName || null,
+          destinationUrl: src.destinationUrl,
+          headline: src.headline,
+          bodyCopy: src.bodyCopy,
+          // uploadConceptGroup re-fetches the file via fileUrl; fileKey /
+          // fileMimeType / fileSize on QueueRow aren't part of the narrow
+          // interface in this module and are display-only, so we skip
+          // copying them — the new rows get null and the upload still works.
+          fileUrl: src.fileUrl,
+          handle: src.handle,
+          cta: src.cta,
+          displayUrl: src.displayUrl,
+          pageId: src.pageId,
+          instagramAccountId: src.instagramAccountId,
+          conceptKey: newConceptKey,
+          status: "ready",
+          // metaAdId/metaCreativeId/errorMessage/uploadedAt intentionally null
+        }).returning();
+        newRowsInserted.push(inserted[0] as QueueRow);
+      }
+    } catch (err: any) {
+      // Insert failed — roll back any partial rows for this group
+      if (newRowsInserted.length > 0) {
+        await db.delete(schema.uploadQueue).where(inArray(
+          schema.uploadQueue.id,
+          newRowsInserted.map((r) => r.id),
+        ));
+      }
+      results.push({
+        sourceAdIds: sourceIdsThisGroup,
+        newAdIds: [],
+        success: false,
+        error: `Failed to stage migration rows: ${err.message || String(err)}`,
+      });
+      continue;
+    }
+
+    // Run the standard upload flow on the new rows against the target account.
+    // uploadConceptGroup mutates rows in place (status → uploading → uploaded
+    // with metaAdId), which is exactly what we want on the NEW rows.
+    const result = await uploadConceptGroup(newRowsInserted, targetMeta);
+
+    results.push({
+      sourceAdIds: sourceIdsThisGroup,
+      newAdIds: newRowsInserted.map((r) => r.id),
+      success: result.success,
+      metaAdId: result.metaAdId,
+      metaCreativeId: result.metaCreativeId,
+      error: result.error,
+    });
+
+    // Audit log per migrated concept
+    try {
+      await db.insert(schema.auditLog).values({
+        action: "reupload_to_account",
+        entityType: "ad",
+        entityId: result.metaAdId || String(newRowsInserted[0].id),
+        details: JSON.stringify({
+          sourceAdIds: sourceIdsThisGroup,
+          newAdIds: newRowsInserted.map((r) => r.id),
+          targetAdAccountId: targetMeta.adAccountId,
+          targetAdSetId: opts.targetAdSetId,
+          success: result.success,
+          error: result.error,
+        }),
+      });
+    } catch {}
+  }
+
+  return {
+    results,
+    meta: {
+      total: results.length,
+      success: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    },
+  };
+}

@@ -77,6 +77,9 @@ export const metaSettings = pgTable("meta_settings", {
   appSecret: text("app_secret"),
   accessToken: text("access_token"),
   adAccountId: text("ad_account_id"),
+  // Optional secondary account used by the "Re-upload to new account" flow.
+  // Set this to act_<id> to enable migrating uploaded ads to a different account.
+  secondaryAdAccountId: text("secondary_ad_account_id"),
   pageId: text("page_id"),
   instagramUserId: text("instagram_user_id"),
   instagramHandle: text("instagram_handle"),

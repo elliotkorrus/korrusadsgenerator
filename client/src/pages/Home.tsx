@@ -48,6 +48,7 @@ import { X, Keyboard } from "lucide-react";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ReuploadToAccountDialog from "../components/ReuploadToAccountDialog";
 import LazyThumbnail from "../components/LazyThumbnail";
 
 const FOCUS_VIEWS = [
@@ -1402,6 +1403,10 @@ export default function Home() {
   // Ad Sets view — toggle to show only active ad sets
   const [adSetsActiveOnly, setAdSetsActiveOnly] = useState(true);
 
+  // Re-upload-to-new-account (account migration) state
+  const [showReuploadDialog, setShowReuploadDialog] = useState(false);
+  const [reuploadSourceAdIds, setReuploadSourceAdIds] = useState<number[]>([]);
+
   // Duplicate-with-new-URL state
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [duplicateSourceAdIds, setDuplicateSourceAdIds] = useState<number[]>([]);
@@ -2225,6 +2230,20 @@ export default function Home() {
                 {pausingAds === "ACTIVE" && pauseProgress
                   ? `▶ ${pauseProgress.completed}/${pauseProgress.total}…`
                   : "▶ Resume"}
+              </button>
+              <button
+                onClick={() => {
+                  const uploadedIds = selectedIds.filter((id) =>
+                    allItems.find((i) => i.id === id)?.status === "uploaded"
+                  );
+                  setReuploadSourceAdIds(uploadedIds);
+                  setShowReuploadDialog(true);
+                }}
+                className="px-2.5 py-1 text-xs rounded-md transition-colors"
+                style={{ background: "rgba(168,139,250,0.1)", color: "#a78bfa", border: "1px solid rgba(168,139,250,0.3)" }}
+                title="Re-create selected uploaded ads in a different ad account (e.g. after migrating to a new Meta account)"
+              >
+                ⇪ Re-upload to new account
               </button>
             </>
           )}
@@ -3603,6 +3622,15 @@ export default function Home() {
           </div>
         );
       })()}
+
+      {/* Re-upload selected uploaded ads to a different ad account */}
+      {showReuploadDialog && reuploadSourceAdIds.length > 0 && (
+        <ReuploadToAccountDialog
+          sourceAdIds={reuploadSourceAdIds}
+          onClose={() => setShowReuploadDialog(false)}
+          onComplete={() => { utils.queue.list.invalidate(); }}
+        />
+      )}
 
       {/* Duplicate ads with new URL dialog */}
       {showDuplicateDialog && (() => {

@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl } from "./meta-upload.js";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
 import { uploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 import { uploadState } from "./upload-state.js";
@@ -485,6 +485,127 @@ app.get("/api/duplicate-ads-with-url/status", (_req, res) => {
     active: true,
     ...activeDuplicateJob,
     elapsedMs: Date.now() - activeDuplicateJob.startedAt,
+  });
+});
+
+// ─── Re-upload uploaded ads to a different ad account (migration) ───
+//
+// Starts a background job that, for each source ad ID, inserts a fresh
+// upload_queue row and uploads it to the target ad account / ad set.
+// Source rows are NOT mutated. Client polls /status while it runs.
+let activeReuploadJob: {
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  errors: Array<{ sourceAdIds: number[]; error: string }>;
+  done: boolean;
+  startedAt: number;
+  targetAdAccountId: string;
+  targetAdSetId: string;
+} | null = null;
+
+app.post("/api/reupload-to-account", express.json(), async (req, res) => {
+  const { sourceAdIds, targetAdAccountId, targetAdSetId, targetAdSetName } = req.body as {
+    sourceAdIds?: number[];
+    targetAdAccountId?: string;
+    targetAdSetId?: string;
+    targetAdSetName?: string;
+  };
+  if (!Array.isArray(sourceAdIds) || sourceAdIds.length === 0) {
+    res.status(400).json({ success: false, error: "sourceAdIds (array) required" });
+    return;
+  }
+  if (!targetAdAccountId || typeof targetAdAccountId !== "string") {
+    res.status(400).json({ success: false, error: "targetAdAccountId required" });
+    return;
+  }
+  if (!targetAdSetId || typeof targetAdSetId !== "string") {
+    res.status(400).json({ success: false, error: "targetAdSetId required" });
+    return;
+  }
+  if (activeReuploadJob && !activeReuploadJob.done) {
+    const elapsedMs = Date.now() - activeReuploadJob.startedAt;
+    const STALE_AFTER_MS = 10 * 60 * 1000;
+    if (elapsedMs > STALE_AFTER_MS) {
+      logger.warn("Auto-resetting stale reupload job", {
+        elapsedMs,
+        completed: activeReuploadJob.completed,
+        total: activeReuploadJob.total,
+      });
+      activeReuploadJob = null;
+    } else {
+      const elapsedSec = Math.round(elapsedMs / 1000);
+      res.status(409).json({
+        success: false,
+        error: `A re-upload job is already running (${activeReuploadJob.completed}/${activeReuploadJob.total} done, ${elapsedSec}s elapsed). Wait for it to finish.`,
+        elapsedMs,
+        completed: activeReuploadJob.completed,
+        total: activeReuploadJob.total,
+      });
+      return;
+    }
+  }
+
+  activeReuploadJob = {
+    total: sourceAdIds.length,
+    completed: 0,
+    success: 0,
+    failed: 0,
+    errors: [],
+    done: false,
+    startedAt: Date.now(),
+    targetAdAccountId,
+    targetAdSetId,
+  };
+
+  res.json({ success: true, message: "Re-upload started", total: sourceAdIds.length });
+
+  (async () => {
+    try {
+      // Process in chunks so progress updates feel responsive even on large
+      // batches. Each chunk is one reuploadAdsToAccount call, which itself
+      // groups by concept internally.
+      const CHUNK = 5;
+      for (let i = 0; i < sourceAdIds.length; i += CHUNK) {
+        const slice = sourceAdIds.slice(i, i + CHUNK);
+        const result = await reuploadAdsToAccount(slice, {
+          targetAdAccountId,
+          targetAdSetId,
+          targetAdSetName,
+        });
+        activeReuploadJob!.completed += slice.length;
+        // result.meta counts concept groups, not source rows; sum row-level success
+        for (const r of result.results) {
+          if (r.success) {
+            activeReuploadJob!.success += r.sourceAdIds.length;
+          } else {
+            activeReuploadJob!.failed += r.sourceAdIds.length;
+            if (r.error) {
+              activeReuploadJob!.errors.push({ sourceAdIds: r.sourceAdIds, error: r.error });
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.error("Background reupload failed", { error: err.message });
+      activeReuploadJob!.errors.push({ sourceAdIds: [], error: err.message });
+      activeReuploadJob!.failed = activeReuploadJob!.total - activeReuploadJob!.success;
+    } finally {
+      activeReuploadJob!.done = true;
+    }
+  })();
+});
+
+app.get("/api/reupload-to-account/status", (_req, res) => {
+  if (!activeReuploadJob) {
+    res.json({ active: false });
+    return;
+  }
+  res.json({
+    active: true,
+    ...activeReuploadJob,
+    elapsedMs: Date.now() - activeReuploadJob.startedAt,
   });
 });
 
