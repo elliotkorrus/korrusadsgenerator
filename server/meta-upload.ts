@@ -97,6 +97,7 @@ interface QueueRow {
   instagramAccountId: string | null;
   conceptKey: string | null;
   status: string;
+  metaAdId: string | null;
 }
 
 interface UploadResult {
@@ -2178,6 +2179,98 @@ export async function setAdStatusInMeta(
 // migrated concept key) and run the standard upload flow against a
 // DIFFERENT ad account. Source rows are NOT mutated — they remain as
 // historical records of the old-account upload.
+
+// ── Multi-placement recovery helpers ─────────────────────────────────
+//
+// Some legacy ads were originally uploaded as multi-placement creatives
+// (e.g. a 4:5 image labeled "feed_label" + a 9:16 image labeled
+// "story_label"), but our DB only ever recorded ONE queue row for them
+// — usually the 9:16. A naive migration that only walks our DB rows
+// re-creates a single-placement ad in the new account, which Meta then
+// crops for the unrepresented placement. These helpers recover the
+// missing placement directly from Meta's source creative.
+
+interface SourceCreativeAsset {
+  placement: "feed" | "story";
+  type: "image" | "video";
+  hash?: string;     // image hash (image assets)
+  videoId?: string;  // video id (video assets)
+}
+
+/** Inspect a source Meta ad's creative; return its per-placement assets. */
+async function inspectSourceCreative(
+  metaAdId: string,
+  accessToken: string
+): Promise<{ assets: SourceCreativeAsset[]; raw: any } | null> {
+  try {
+    const url = `${META_BASE}/${metaAdId}?fields=creative{id,asset_feed_spec,object_story_spec,name}&access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const creative = data?.creative;
+    if (!creative) return null;
+
+    const assets: SourceCreativeAsset[] = [];
+
+    // Prefer asset_feed_spec (multi-placement) when present
+    let afs: any = creative.asset_feed_spec;
+    if (typeof afs === "string") {
+      try { afs = JSON.parse(afs); } catch { afs = null; }
+    }
+    if (afs && (afs.images?.length || afs.videos?.length)) {
+      const labelToPlacement = (label?: string): "feed" | "story" =>
+        label === "story_label" ? "story" : "feed";
+      for (const img of (afs.images || [])) {
+        const label = img.adlabels?.[0]?.name;
+        assets.push({ placement: labelToPlacement(label), type: "image", hash: img.hash });
+      }
+      for (const vid of (afs.videos || [])) {
+        const label = vid.adlabels?.[0]?.name;
+        assets.push({ placement: labelToPlacement(label), type: "video", videoId: vid.video_id });
+      }
+      return { assets, raw: creative };
+    }
+
+    // Fall back to object_story_spec (single placement)
+    let oss: any = creative.object_story_spec;
+    if (typeof oss === "string") {
+      try { oss = JSON.parse(oss); } catch { oss = null; }
+    }
+    if (oss) {
+      if (oss.link_data?.image_hash) {
+        assets.push({ placement: "feed", type: "image", hash: oss.link_data.image_hash });
+      } else if (oss.video_data?.video_id) {
+        assets.push({ placement: "feed", type: "video", videoId: oss.video_data.video_id });
+      }
+    }
+    return { assets, raw: creative };
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a Meta ad-image hash to its public CDN URL (scoped to the
+ *  account that owns the image). Returns null if Meta refuses. */
+async function getImageUrlFromHash(
+  sourceAccountId: string,
+  hash: string,
+  accessToken: string
+): Promise<string | null> {
+  const acct = sourceAccountId.startsWith("act_") ? sourceAccountId : `act_${sourceAccountId}`;
+  const url = `${META_BASE}/${acct}/adimages?hashes=${encodeURIComponent(JSON.stringify([hash]))}&fields=url&access_token=${encodeURIComponent(accessToken)}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // adimages returns either { data: [...] } or { data: { <hash>: { url } } }
+    if (Array.isArray(data?.data)) return data.data[0]?.url || null;
+    if (data?.data && typeof data.data === "object") return data.data[hash]?.url || null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export interface ReuploadResult {
   sourceAdIds: number[];      // source rows in this concept group
   newAdIds: number[];         // new rows inserted (one per source)
@@ -2242,6 +2335,10 @@ export async function reuploadAdsToAccount(
 
   const results: ReuploadResult[] = [];
 
+  // Source ad account ID — needed when we recover missing placement assets
+  // by hash from the original creative.
+  const sourceAccountId = normalizeAdAccountId(metaSettings.adAccountId || "");
+
   for (const [origKey, origRows] of groups) {
     // Sort by dimensions for deterministic order (matches upload flow)
     origRows.sort((a, b) => (a.dimensions || "").localeCompare(b.dimensions || ""));
@@ -2250,11 +2347,189 @@ export async function reuploadAdsToAccount(
     // group together in the dashboard as a distinct migrated concept.
     const newConceptKey = `${origKey}__migrated_${normalizeAdAccountId(opts.targetAdAccountId)}`;
     const newRowsInserted: QueueRow[] = [];
-    const sourceIdsThisGroup: number[] = [];
+    const sourceIdsThisGroup: number[] = origRows.map((r) => r.id);
+    const primary = origRows[0];
 
+    // ── STEP A: probe the source Meta creative for placement coverage ──
+    //
+    // If the source creative is multi-placement IMAGES and the per-placement
+    // hashes are NOT all represented by our DB rows, we have to recover the
+    // missing ones from Meta directly. (Videos can't be recovered this way —
+    // Meta doesn't expose `source` URLs for ad videos — so videos always
+    // fall through to the original fileUrl-based path.)
+    let recoveredPath: {
+      assets: AssetEntry[];
+      placementDimsByAssetIdx: Array<"4:5" | "9:16">;
+    } | null = null;
+
+    if (primary?.metaAdId && (primary.contentType || "").toUpperCase() === "IMG") {
+      const inspected = await inspectSourceCreative(primary.metaAdId, targetMeta.accessToken);
+      const sourceImageAssets = (inspected?.assets || []).filter((a) => a.type === "image");
+      // Need at least one feed AND one story label, otherwise the existing
+      // path already produces the right result and we keep things simple.
+      const hasFeed = sourceImageAssets.some((a) => a.placement === "feed");
+      const hasStory = sourceImageAssets.some((a) => a.placement === "story");
+      if (hasFeed && hasStory) {
+        // Recover each placement's image: hash → URL → bytes → upload
+        // to TARGET account. If any recovery step fails, skip this path
+        // and fall through to the existing per-row uploader (degrade,
+        // don't fail the whole migration).
+        try {
+          const recoveredAssets: AssetEntry[] = [];
+          const dimsByAssetIdx: Array<"4:5" | "9:16"> = [];
+          for (const a of sourceImageAssets) {
+            if (!a.hash) throw new Error("source image asset missing hash");
+            const srcUrl = await getImageUrlFromHash(sourceAccountId, a.hash, targetMeta.accessToken);
+            if (!srcUrl) throw new Error(`could not resolve URL for hash ${a.hash}`);
+            const { buffer, mimeType } = await fetchFileBuffer(srcUrl);
+            const ext = mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : mimeType.includes("webp") ? "webp" : "jpg";
+            const filenameHint = `${a.placement}_${primary.id}.${ext}`;
+            const newHash = await uploadImageToMeta(
+              targetMeta.adAccountId,
+              targetMeta.accessToken,
+              buffer,
+              filenameHint,
+              mimeType.startsWith("image/") ? mimeType : "image/jpeg",
+            );
+            recoveredAssets.push({ id: newHash, type: "image", placement: a.placement });
+            dimsByAssetIdx.push(a.placement === "story" ? "9:16" : "4:5");
+          }
+          recoveredPath = { assets: recoveredAssets, placementDimsByAssetIdx: dimsByAssetIdx };
+        } catch (recoveryErr: any) {
+          console.error("[migration] multi-placement recovery failed, falling back to single-row path:", recoveryErr?.message || recoveryErr);
+          recoveredPath = null;
+        }
+      }
+    }
+
+    // ── PATH 1: Meta-creative-aware (multi-placement images) ──
+    if (recoveredPath) {
+      try {
+        // Resolve copy: prefer row-level, then fall back to copy library
+        let headline = primary.headline || "";
+        let bodyCopy = primary.bodyCopy || "";
+        if ((!headline || !bodyCopy) && primary.copySlug) {
+          const copyRows = await db.select().from(schema.copyLibrary)
+            .where(eq(schema.copyLibrary.copySlug, primary.copySlug));
+          const copyRow = copyRows[0];
+          if (copyRow) {
+            if (!headline) headline = copyRow.headline;
+            if (!bodyCopy) bodyCopy = copyRow.bodyCopy;
+          }
+        }
+        const destinationUrl = primary.destinationUrl || targetMeta.defaultDestinationUrl || "";
+        const displayUrl = primary.displayUrl || targetMeta.defaultDisplayUrl || "";
+        const cta = primary.cta || targetMeta.defaultCta || "SHOP_NOW";
+        const pageId = primary.pageId || targetMeta.pageId || "";
+        const instagramUserId = primary.instagramAccountId || targetMeta.instagramUserId || "";
+
+        const creativeId = await createAdCreative(targetMeta.adAccountId, targetMeta.accessToken, {
+          name: primary.generatedAdName,
+          pageId,
+          instagramUserId,
+          assets: recoveredPath.assets,
+          bodyCopy,
+          headline,
+          displayUrl,
+          destinationUrl,
+          cta,
+          utmTags: targetMeta.utmTemplate || undefined,
+        });
+        const metaAdId = await createAd(targetMeta.adAccountId, targetMeta.accessToken, {
+          name: primary.generatedAdName,
+          adSetId: opts.targetAdSetId,
+          creativeId,
+        });
+
+        // Insert one DB row per recovered placement so the dashboard shows
+        // the migrated concept as a proper multi-size group.
+        for (let i = 0; i < recoveredPath.assets.length; i++) {
+          const a = recoveredPath.assets[i];
+          const dim = recoveredPath.placementDimsByAssetIdx[i];
+          const ins = await db.insert(schema.uploadQueue).values({
+            brand: primary.brand,
+            initiative: primary.initiative,
+            variation: primary.variation,
+            angle: primary.angle,
+            source: primary.source,
+            product: primary.product,
+            contentType: primary.contentType,
+            creativeType: primary.creativeType,
+            dimensions: dim,
+            copySlug: primary.copySlug,
+            filename: primary.filename,
+            date: primary.date,
+            generatedAdName: primary.generatedAdName,
+            adSetId: opts.targetAdSetId,
+            adSetName: opts.targetAdSetName || null,
+            destinationUrl: primary.destinationUrl,
+            headline: primary.headline,
+            bodyCopy: primary.bodyCopy,
+            // For recovered placements we don't yet have an R2 fileUrl;
+            // dashboard works with a null fileUrl on uploaded rows.
+            fileUrl: a.placement === (primary.dimensions === "9:16" ? "story" : "feed") ? primary.fileUrl : null,
+            handle: primary.handle,
+            cta: primary.cta,
+            displayUrl: primary.displayUrl,
+            pageId: primary.pageId,
+            instagramAccountId: primary.instagramAccountId,
+            conceptKey: newConceptKey,
+            status: "uploaded",
+            metaAdId,
+            metaCreativeId: creativeId,
+            uploadedAt: new Date().toISOString(),
+          }).returning();
+          newRowsInserted.push(ins[0] as QueueRow);
+        }
+
+        results.push({
+          sourceAdIds: sourceIdsThisGroup,
+          newAdIds: newRowsInserted.map((r) => r.id),
+          success: true,
+          metaAdId,
+          metaCreativeId: creativeId,
+        });
+        try {
+          await db.insert(schema.auditLog).values({
+            action: "reupload_to_account",
+            entityType: "ad",
+            entityId: metaAdId,
+            details: JSON.stringify({
+              path: "meta-creative-recover",
+              sourceAdIds: sourceIdsThisGroup,
+              newAdIds: newRowsInserted.map((r) => r.id),
+              targetAdAccountId: targetMeta.adAccountId,
+              targetAdSetId: opts.targetAdSetId,
+              placementsRecovered: recoveredPath.assets.length,
+            }),
+          });
+        } catch {}
+        continue;
+      } catch (err: any) {
+        // Recovery-path runtime failure — rollback any inserted rows and
+        // report. We deliberately do NOT fall back to the lossy path here;
+        // the user explicitly wants both placements, and silently doing the
+        // wrong thing is worse than a clear error they can retry.
+        if (newRowsInserted.length > 0) {
+          await db.delete(schema.uploadQueue).where(inArray(
+            schema.uploadQueue.id,
+            newRowsInserted.map((r) => r.id),
+          ));
+        }
+        const errorMsg = err?.message || String(err);
+        results.push({
+          sourceAdIds: sourceIdsThisGroup,
+          newAdIds: [],
+          success: false,
+          error: `Multi-placement re-upload failed: ${errorMsg}`,
+        });
+        continue;
+      }
+    }
+
+    // ── PATH 2: fallback — mirror source DB rows 1:1 ──
     try {
       for (const src of origRows) {
-        sourceIdsThisGroup.push(src.id);
         const inserted = await db.insert(schema.uploadQueue).values({
           brand: src.brand,
           initiative: src.initiative,
