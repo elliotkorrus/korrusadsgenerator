@@ -2197,18 +2197,22 @@ interface SourceCreativeAsset {
   videoId?: string;  // video id (video assets)
 }
 
-/** Inspect a source Meta ad's creative; return its per-placement assets. */
+/** Inspect a source Meta ad's creative; return its per-placement assets
+ *  and the account_id that OWNS the source ad (needed for hash lookups —
+ *  image hashes are scoped to the account that uploaded them, which may
+ *  not equal meta_settings.ad_account_id once a swap has happened). */
 async function inspectSourceCreative(
   metaAdId: string,
   accessToken: string
-): Promise<{ assets: SourceCreativeAsset[]; raw: any } | null> {
+): Promise<{ assets: SourceCreativeAsset[]; sourceAccountId: string | null; raw: any } | null> {
   try {
-    const url = `${META_BASE}/${metaAdId}?fields=creative{id,asset_feed_spec,object_story_spec,name}&access_token=${encodeURIComponent(accessToken)}`;
+    const url = `${META_BASE}/${metaAdId}?fields=account_id,creative{id,asset_feed_spec,object_story_spec,name}&access_token=${encodeURIComponent(accessToken)}`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
     const creative = data?.creative;
     if (!creative) return null;
+    const sourceAccountId: string | null = data?.account_id ? String(data.account_id) : null;
 
     const assets: SourceCreativeAsset[] = [];
 
@@ -2228,7 +2232,7 @@ async function inspectSourceCreative(
         const label = vid.adlabels?.[0]?.name;
         assets.push({ placement: labelToPlacement(label), type: "video", videoId: vid.video_id });
       }
-      return { assets, raw: creative };
+      return { assets, sourceAccountId, raw: creative };
     }
 
     // Fall back to object_story_spec (single placement)
@@ -2243,7 +2247,7 @@ async function inspectSourceCreative(
         assets.push({ placement: "feed", type: "video", videoId: oss.video_data.video_id });
       }
     }
-    return { assets, raw: creative };
+    return { assets, sourceAccountId, raw: creative };
   } catch {
     return null;
   }
@@ -2335,9 +2339,10 @@ export async function reuploadAdsToAccount(
 
   const results: ReuploadResult[] = [];
 
-  // Source ad account ID — needed when we recover missing placement assets
-  // by hash from the original creative.
-  const sourceAccountId = normalizeAdAccountId(metaSettings.adAccountId || "");
+  // We fetch the source ad's owning account_id dynamically from Meta
+  // (per ad), not from meta_settings.ad_account_id — that field may now
+  // point at the migration TARGET if the user already swapped settings.
+  // Image hashes are scoped to the account that uploaded them.
 
   for (const [origKey, origRows] of groups) {
     // Sort by dimensions for deterministic order (matches upload flow)
@@ -2375,12 +2380,17 @@ export async function reuploadAdsToAccount(
         // and fall through to the existing per-row uploader (degrade,
         // don't fail the whole migration).
         try {
+          // Resolve hashes against the account that OWNS the source ad,
+          // not whatever primary account is currently configured. Fall back
+          // to meta_settings.ad_account_id if Meta didn't return account_id.
+          const hashLookupAccountId = inspected?.sourceAccountId
+            || normalizeAdAccountId(metaSettings.adAccountId || "");
           const recoveredAssets: AssetEntry[] = [];
           const dimsByAssetIdx: Array<"4:5" | "9:16"> = [];
           for (const a of sourceImageAssets) {
             if (!a.hash) throw new Error("source image asset missing hash");
-            const srcUrl = await getImageUrlFromHash(sourceAccountId, a.hash, targetMeta.accessToken);
-            if (!srcUrl) throw new Error(`could not resolve URL for hash ${a.hash}`);
+            const srcUrl = await getImageUrlFromHash(hashLookupAccountId, a.hash, targetMeta.accessToken);
+            if (!srcUrl) throw new Error(`could not resolve URL for hash ${a.hash} (looked up against ${hashLookupAccountId})`);
             const { buffer, mimeType } = await fetchFileBuffer(srcUrl);
             const ext = mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : mimeType.includes("webp") ? "webp" : "jpg";
             const filenameHint = `${a.placement}_${primary.id}.${ext}`;
