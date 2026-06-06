@@ -43,6 +43,7 @@ import {
   GitMerge,
   Kanban,
   FileSpreadsheet,
+  Sparkles,
 } from "lucide-react";
 import { X, Keyboard } from "lucide-react";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -666,6 +667,10 @@ export default function Home() {
   // Merge dialog
   const [showMergeDialog, setShowMergeDialog] = useState(false);
 
+  // Smart Merge dialog
+  const [showSmartMergeDialog, setShowSmartMergeDialog] = useState(false);
+  const [smartMergeRunning, setSmartMergeRunning] = useState(false);
+
   // Delete confirmation
   const [pendingDelete, setPendingDelete] = useState<{ ids: number[]; label: string } | null>(null);
   function confirmDelete(ids: number[], label: string) { setPendingDelete({ ids, label }); }
@@ -1032,6 +1037,106 @@ export default function Home() {
     return result;
   }, [items]);
 
+  // Smart Merge: detect "concept families" — sets of inbox concepts sharing
+  // every naming field except filename + dimensions. For each family, pair
+  // rows across dimensions by filename order (alphabetical).
+  const smartMergePlan = useMemo(() => {
+    if (focusView !== "inbox") return { families: [], pairs: 0 };
+
+    // Build family signature (all naming fields except filename + dimensions)
+    const signatureOf = (g: { shared: QueueItem }) =>
+      [
+        g.shared.brand || "",
+        g.shared.initiative || "",
+        g.shared.variation || "",
+        g.shared.angle || "",
+        g.shared.source || "",
+        g.shared.product || "",
+        g.shared.contentType || "",
+        g.shared.creativeType || "",
+        g.shared.copySlug || "",
+        g.shared.date || "",
+      ].join("__");
+
+    // Group concepts by signature
+    const bySig = new Map<string, typeof grouped>();
+    for (const g of grouped) {
+      // Skip already-multi-format concepts (have 2+ dimensions in one group)
+      const dims = new Set(g.rows.map((r) => r.dimensions));
+      if (dims.size > 1) continue;
+      const sig = signatureOf(g);
+      if (!sig.replace(/_/g, "").trim()) continue; // no real fields → skip
+      if (!bySig.has(sig)) bySig.set(sig, []);
+      bySig.get(sig)!.push(g);
+    }
+
+    // For each family with ≥2 different dimensions, build pairs
+    type MergePair = {
+      primaryGroup: typeof grouped[number];
+      secondaryGroups: typeof grouped;
+    };
+    type Family = {
+      signature: string;
+      shared: QueueItem;
+      pairs: MergePair[];
+      leftovers: typeof grouped; // concepts not paired (extra files in a dim)
+    };
+    const families: Family[] = [];
+
+    for (const [sig, groups] of bySig) {
+      if (groups.length < 2) continue;
+      // Bucket by dimension
+      const byDim = new Map<string, typeof grouped>();
+      for (const g of groups) {
+        const dim = g.shared.dimensions || "";
+        if (!byDim.has(dim)) byDim.set(dim, []);
+        byDim.get(dim)!.push(g);
+      }
+      const dimList = [...byDim.keys()];
+      if (dimList.length < 2) continue; // need ≥2 distinct dims to merge
+
+      // Sort each dim's groups alphabetically by filename (deterministic pairing)
+      for (const dim of dimList) {
+        byDim.get(dim)!.sort((a, b) =>
+          (a.shared.filename || "").localeCompare(b.shared.filename || "")
+        );
+      }
+
+      // Pair count = min count across dims (limit by the smallest bucket)
+      const pairCount = Math.min(...dimList.map((d) => byDim.get(d)!.length));
+      const pairs: MergePair[] = [];
+      for (let i = 0; i < pairCount; i++) {
+        // First dim alphabetically → primary
+        const primaryDim = dimList[0];
+        const primary = byDim.get(primaryDim)![i];
+        const secondaries: typeof grouped = [];
+        for (let d = 1; d < dimList.length; d++) {
+          secondaries.push(byDim.get(dimList[d])![i]);
+        }
+        pairs.push({ primaryGroup: primary, secondaryGroups: secondaries });
+      }
+
+      // Leftover groups (extra files beyond min count)
+      const leftovers: typeof grouped = [];
+      for (const dim of dimList) {
+        const bucket = byDim.get(dim)!;
+        if (bucket.length > pairCount) {
+          leftovers.push(...bucket.slice(pairCount));
+        }
+      }
+
+      families.push({
+        signature: sig,
+        shared: groups[0].shared,
+        pairs,
+        leftovers,
+      });
+    }
+
+    const totalPairs = families.reduce((sum, f) => sum + f.pairs.length, 0);
+    return { families, pairs: totalPairs };
+  }, [grouped, focusView]);
+
   // Feature 4: filtered grouped array
   const filteredGrouped = useMemo(() => {
     let result = grouped;
@@ -1302,6 +1407,43 @@ export default function Home() {
     uploaded: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
     error: "bg-red-500/10 text-red-400 border border-red-500/20",
   };
+
+  // Execute all Smart Merge pairs sequentially
+  async function runSmartMerge() {
+    if (smartMergeRunning) return;
+    setSmartMergeRunning(true);
+    let mergedCount = 0;
+    let failedCount = 0;
+    try {
+      for (const family of smartMergePlan.families) {
+        for (const pair of family.pairs) {
+          const primaryIds = pair.primaryGroup.rows.map((r) => r.id);
+          const secondaryIds = pair.secondaryGroups.flatMap((g) =>
+            g.rows.map((r) => r.id)
+          );
+          try {
+            await mergeMut.mutateAsync({ primaryIds, secondaryIds });
+            mergedCount++;
+          } catch (e) {
+            console.error("Smart merge pair failed", e);
+            failedCount++;
+          }
+        }
+      }
+      if (mergedCount > 0) {
+        toast.success(
+          "Smart Merge complete",
+          `${mergedCount} pair${mergedCount === 1 ? "" : "s"} merged${failedCount ? `, ${failedCount} failed` : ""}`
+        );
+      } else if (failedCount > 0) {
+        toast.error("Smart Merge failed", `${failedCount} pair${failedCount === 1 ? "" : "s"} could not merge`);
+      }
+      await utils.queue.list.invalidate();
+    } finally {
+      setSmartMergeRunning(false);
+      setShowSmartMergeDialog(false);
+    }
+  }
 
   const updateConceptField = async (conceptKey: string, field: string, value: string) => {
     const group = grouped.find((g) => g.key === conceptKey);
@@ -1855,6 +1997,24 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-2 ml-auto">
+          {/* Smart Merge — auto-detect mergeable families in the inbox */}
+          {focusView === "inbox" && smartMergePlan.pairs > 0 && (
+            <button
+              onClick={() => setShowSmartMergeDialog(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 transition-all text-[11px] font-semibold rounded-md"
+              style={{
+                background: "rgba(168,85,247,0.10)",
+                border: "1px solid rgba(168,85,247,0.30)",
+                color: "#c4a8f5",
+                cursor: "pointer",
+              }}
+              title={`${smartMergePlan.pairs} mergeable pair${smartMergePlan.pairs === 1 ? "" : "s"} detected across ${smartMergePlan.families.length} concept famil${smartMergePlan.families.length === 1 ? "y" : "ies"}`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Smart Merge ({smartMergePlan.pairs})
+            </button>
+          )}
+
           {/* Merge button — appears when 2+ concept groups are selected */}
           {selectedKeys.size >= 2 && (
             <button
@@ -3317,6 +3477,113 @@ export default function Home() {
       )}
 
       <UploadOverlay progress={uploadProgress} active={batchSending} />
+
+      {showSmartMergeDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !smartMergeRunning) setShowSmartMergeDialog(false);
+          }}
+        >
+          <div
+            className="relative flex flex-col rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden"
+            style={{ background: "var(--surface-1)", border: "1px solid var(--surface-3)", fontFamily: "'IBM Plex Sans', sans-serif" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ borderBottom: "1px solid var(--surface-3)" }}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: "rgba(168,85,247,0.12)", border: "1px solid rgba(168,85,247,0.25)" }}>
+                  <Sparkles className="w-4 h-4" style={{ color: "#c4a8f5" }} />
+                </div>
+                <div>
+                  <h2 className="text-[14px] font-semibold" style={{ color: "var(--text-primary)", letterSpacing: "-0.01em" }}>Smart Merge</h2>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    Detected {smartMergePlan.pairs} mergeable pair{smartMergePlan.pairs === 1 ? "" : "s"} across {smartMergePlan.families.length} concept famil{smartMergePlan.families.length === 1 ? "y" : "ies"}. Pairing is by filename order (alphabetical).
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !smartMergeRunning && setShowSmartMergeDialog(false)}
+                disabled={smartMergeRunning}
+                className="w-6 h-6 flex items-center justify-center rounded-md transition-colors"
+                style={{ color: "var(--text-muted)", border: "none", background: "transparent", cursor: smartMergeRunning ? "not-allowed" : "pointer" }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {smartMergePlan.families.map((family, fIdx) => (
+                <div key={fIdx} className="rounded-lg p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--surface-3)" }}>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-[10px] font-mono font-semibold" style={{ color: "var(--text-secondary)" }}>
+                      {family.shared.initiative || "—"} · {family.shared.variation || "—"} · {family.shared.angle || "—"} · {family.shared.source || "—"} · {family.shared.copySlug || "—"}
+                    </span>
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-sm border" style={{ background: "rgba(168,85,247,0.10)", color: "#c4a8f5", borderColor: "rgba(168,85,247,0.25)" }}>
+                      {family.pairs.length} PAIR{family.pairs.length === 1 ? "" : "S"}
+                    </span>
+                    {family.leftovers.length > 0 && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-sm border" style={{ background: "rgba(245,158,11,0.10)", color: "#f59e0b", borderColor: "rgba(245,158,11,0.25)" }}>
+                        {family.leftovers.length} UNPAIRED
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {family.pairs.slice(0, 4).map((pair, pIdx) => (
+                      <div key={pIdx} className="flex items-center gap-2 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                        <span style={{ color: "var(--text-secondary)" }}>#{pIdx + 1}</span>
+                        <span className="px-1 py-0.5 rounded-sm" style={{ background: "var(--surface-3)" }}>{pair.primaryGroup.shared.dimensions} · {pair.primaryGroup.shared.filename || "—"}</span>
+                        {pair.secondaryGroups.map((s, sIdx) => (
+                          <React.Fragment key={sIdx}>
+                            <span>+</span>
+                            <span className="px-1 py-0.5 rounded-sm" style={{ background: "var(--surface-3)" }}>{s.shared.dimensions} · {s.shared.filename || "—"}</span>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    ))}
+                    {family.pairs.length > 4 && (
+                      <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                        … and {family.pairs.length - 4} more pair{family.pairs.length - 4 === 1 ? "" : "s"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex-shrink-0 px-5 py-4 flex items-center justify-between gap-3" style={{ borderTop: "1px solid var(--surface-3)", background: "var(--surface-2)" }}>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                Files are paired alphabetically within each family. You can un-merge later via individual concept actions.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSmartMergeDialog(false)}
+                  disabled={smartMergeRunning}
+                  className="px-3 py-1.5 text-[12px] font-medium rounded-md transition-colors"
+                  style={{ background: "transparent", border: "1px solid var(--surface-3)", color: "var(--text-secondary)", cursor: smartMergeRunning ? "not-allowed" : "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={runSmartMerge}
+                  disabled={smartMergeRunning || smartMergePlan.pairs === 0}
+                  className="px-3 py-1.5 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition-all"
+                  style={{
+                    background: smartMergeRunning ? "rgba(168,85,247,0.4)" : "linear-gradient(135deg, #a855f7, #7c3aed)",
+                    color: "white",
+                    border: "none",
+                    cursor: smartMergeRunning ? "not-allowed" : "pointer",
+                    opacity: smartMergeRunning ? 0.7 : 1,
+                  }}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {smartMergeRunning ? "Merging…" : `Merge ${smartMergePlan.pairs} pair${smartMergePlan.pairs === 1 ? "" : "s"}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showMergeDialog && selectedKeys.size >= 2 && (
         <MergeDialog
