@@ -1453,8 +1453,11 @@ export default function Home() {
   async function runSmartMerge() {
     if (smartMergeRunning) return;
     setSmartMergeRunning(true);
-    let mergedCount = 0;
-    let failedCount = 0;
+    let rowsMerged = 0;
+    let rowsSkipped = 0;
+    let pairsOk = 0;
+    let pairsFailed = 0;
+    const failureMessages: string[] = [];
     try {
       for (const family of smartMergePlan.families) {
         for (const pair of family.pairs) {
@@ -1462,22 +1465,45 @@ export default function Home() {
           const secondaryIds = pair.secondaryGroups.flatMap((g) =>
             g.rows.map((r) => r.id)
           );
+          console.log("[smart-merge] sending pair", { primaryIds, secondaryIds });
           try {
-            await mergeMut.mutateAsync({ primaryIds, secondaryIds });
-            mergedCount++;
-          } catch (e) {
-            console.error("Smart merge pair failed", e);
-            failedCount++;
+            const result: any = await mergeMut.mutateAsync({ primaryIds, secondaryIds });
+            console.log("[smart-merge] result", result);
+            // Use the server's authoritative counts. If both are zero, the
+            // server resolved nothing — treat as a failure so we don't lie
+            // to the user.
+            const m = result?.merged ?? 0;
+            const s = result?.skipped ?? 0;
+            if (m === 0 && s === 0) {
+              pairsFailed++;
+              failureMessages.push(`Pair [${primaryIds.join(",")}] → [${secondaryIds.join(",")}] returned no changes`);
+            } else {
+              pairsOk++;
+              rowsMerged += m;
+              rowsSkipped += s;
+            }
+          } catch (e: any) {
+            console.error("[smart-merge] pair failed", { primaryIds, secondaryIds, error: e?.message });
+            pairsFailed++;
+            failureMessages.push(e?.message || "Unknown error");
           }
         }
       }
-      if (mergedCount > 0) {
+      if (pairsOk > 0 && pairsFailed === 0) {
         toast.success(
           "Smart Merge complete",
-          `${mergedCount} pair${mergedCount === 1 ? "" : "s"} merged${failedCount ? `, ${failedCount} failed` : ""}`
+          `${pairsOk} pair${pairsOk === 1 ? "" : "s"} merged · ${rowsMerged} row${rowsMerged === 1 ? "" : "s"} folded${rowsSkipped ? `, ${rowsSkipped} dupe-dim skipped` : ""}`
         );
-      } else if (failedCount > 0) {
-        toast.error("Smart Merge failed", `${failedCount} pair${failedCount === 1 ? "" : "s"} could not merge`);
+      } else if (pairsOk > 0) {
+        toast.warning(
+          "Smart Merge partial",
+          `${pairsOk} OK · ${pairsFailed} failed (${failureMessages[0] || "see console"})`
+        );
+      } else {
+        toast.error(
+          "Smart Merge failed",
+          `${pairsFailed} pair${pairsFailed === 1 ? "" : "s"} failed — ${failureMessages[0] || "see console"}`
+        );
       }
       await utils.queue.list.invalidate();
     } finally {
