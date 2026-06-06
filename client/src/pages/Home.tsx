@@ -1465,10 +1465,14 @@ export default function Home() {
           const secondaryIds = pair.secondaryGroups.flatMap((g) =>
             g.rows.map((r) => r.id)
           );
-          console.log("[smart-merge] sending pair", { primaryIds, secondaryIds });
+          console.log(
+            `[smart-merge] sending pair primaryIds=[${primaryIds.join(",")}] secondaryIds=[${secondaryIds.join(",")}]`
+          );
           try {
             const result: any = await mergeMut.mutateAsync({ primaryIds, secondaryIds });
-            console.log("[smart-merge] result", result);
+            console.log(
+              `[smart-merge] result merged=${result?.merged} skipped=${result?.skipped} success=${result?.success} conceptKey=${result?.conceptKey}`
+            );
             // Use the server's authoritative counts. If both are zero, the
             // server resolved nothing — treat as a failure so we don't lie
             // to the user.
