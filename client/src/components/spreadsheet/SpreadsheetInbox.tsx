@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { ChevronDown, ChevronRight, Loader2, Trash2, CheckCircle2, Upload, AlertTriangle } from "lucide-react";
 import { computeCompleteness } from "../../utils/completeness";
+import AdSetPicker from "../AdSetPicker";
 
 // ─── Types ──────────────────────────────────────────────────────
 export interface SpreadsheetItem {
@@ -118,6 +119,7 @@ function DimBadges({ rows }: { rows: SpreadsheetItem[] }) {
 // ─── Cell component ───────────────────────────────────────────
 function Cell({
   value,
+  displayValue,
   field,
   type,
   options,
@@ -127,10 +129,12 @@ function Cell({
   onFocus,
   onStartEdit,
   onCommit,
+  onCommitWithName,
   onFillHandleMouseDown,
   disabled,
 }: {
   value: string;
+  displayValue?: string; // Pre-resolved human name (e.g. adSetName for adSetId)
   field: string;
   type: "text" | "select" | "readonly";
   options?: { value: string; label: string }[];
@@ -140,6 +144,8 @@ function Cell({
   onFocus: () => void;
   onStartEdit: () => void;
   onCommit: (value: string) => void;
+  // Ad-set picker commits id + name together so we save both at once.
+  onCommitWithName?: (id: string, name: string) => void;
   onFillHandleMouseDown?: (e: React.MouseEvent) => void;
   disabled?: boolean;
 }) {
@@ -208,6 +214,23 @@ function Cell({
   }
 
   if (isEditing && !disabled) {
+    // Ad-set field uses the rich AdSetPicker (search + status + campaign) instead
+    // of a native <select> — the live ad-set list can have 100+ entries.
+    if (field === "adSetId") {
+      return (
+        <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px", position: "relative" }}>
+          <AdSetPicker
+            value={value}
+            displayValue={displayValue}
+            compact
+            onSelect={(id, name) => {
+              if (onCommitWithName) onCommitWithName(id, name);
+              else onCommit(id);
+            }}
+          />
+        </td>
+      );
+    }
     if (type === "select" && options && options.length > 0) {
       return (
         <td className="px-1 py-0.5" style={{ outline: "1px solid rgba(0,153,198,0.6)", outlineOffset: "-1px", position: "relative" }}>
@@ -270,10 +293,15 @@ function Cell({
     >
       {(() => {
         if (!value) return <span style={{ opacity: 0.4 }}>-</span>;
-        // For ad set, show name label instead of raw ID
-        if (field === "adSetId" && options) {
-          const match = options.find((o) => o.value === value);
-          return match ? match.label : value;
+        // For ad set, prefer stored adSetName (handles archived / paused sets
+        // that aren't in the active options list), then options lookup, then ID.
+        if (field === "adSetId") {
+          if (displayValue) return displayValue;
+          if (options) {
+            const match = options.find((o) => o.value === value);
+            if (match) return match.label.replace(/\s*\((?:ACTIVE|PAUSED)\)\s*$/, "");
+          }
+          return value;
         }
         return value;
       })()}
@@ -616,6 +644,7 @@ export default function SpreadsheetInbox({
                       <Cell
                         key={col.key}
                         value={cellValue}
+                        displayValue={col.key === "adSetId" ? (shared.adSetName || undefined) : undefined}
                         field={col.key}
                         type={col.type}
                         options={getFieldOptions(col.key)}
@@ -625,6 +654,11 @@ export default function SpreadsheetInbox({
                         onFocus={() => setFocusedCell({ groupIdx: gIdx, colIdx: cIdx })}
                         onStartEdit={() => setEditingCell({ groupIdx: gIdx, colIdx: cIdx })}
                         onCommit={(v) => handleCommit(key, col.key, v)}
+                        onCommitWithName={col.key === "adSetId" ? ((id, name) => {
+                          onUpdateField(key, "adSetId", id);
+                          onUpdateField(key, "adSetName", name);
+                          setEditingCell(null);
+                        }) : undefined}
                         onFillHandleMouseDown={(e) => handleFillHandleMouseDown(gIdx, cIdx, cellValue)}
                         disabled={isLocked}
                       />

@@ -862,6 +862,13 @@ export default function Home() {
             if (dims) parsed.dimensions = dims;
           } catch { /* ignore */ }
         }
+        // Detect video dimensions (reads metadata only, no full decode)
+        if (file.type.startsWith("video/") && !parsed.dimensions) {
+          try {
+            const dims = await detectVideoDims(file);
+            if (dims) parsed.dimensions = dims;
+          } catch { /* ignore */ }
+        }
         // Merge: ENABLED session defaults WIN over parser guesses (batch-friendly)
         // Parser only fills in what defaults don't cover
         const fields: Record<string, string> = {
@@ -979,6 +986,40 @@ export default function Home() {
       };
       img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
       img.src = url;
+    });
+  }
+
+  // Detect video dimensions via <video> element (metadata-only load).
+  // Browser reads enough of the file to populate videoWidth/videoHeight.
+  function detectVideoDims(file: File): Promise<string | null> {
+    return new Promise((resolve) => {
+      const video = document.createElement("video");
+      const url = URL.createObjectURL(file);
+      let settled = false;
+      const finish = (dims: string | null) => {
+        if (settled) return;
+        settled = true;
+        URL.revokeObjectURL(url);
+        resolve(dims);
+      };
+      const checkRatio = () => {
+        const w = video.videoWidth;
+        const h = video.videoHeight;
+        if (!w || !h) { finish(null); return; }
+        const ratio = w / h;
+        if (Math.abs(ratio - 9 / 16) < 0.08) finish("9:16");
+        else if (Math.abs(ratio - 4 / 5) < 0.08) finish("4:5");
+        else if (Math.abs(ratio - 1) < 0.08) finish("1:1");
+        else if (Math.abs(ratio - 16 / 9) < 0.08) finish("16:9");
+        else finish(null);
+      };
+      video.preload = "metadata";
+      video.muted = true;
+      video.onloadedmetadata = checkRatio;
+      video.onerror = () => finish(null);
+      // Safety timeout — don't block the upload flow if metadata never lands.
+      setTimeout(() => finish(null), 4000);
+      video.src = url;
     });
   }
 
