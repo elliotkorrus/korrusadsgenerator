@@ -442,84 +442,95 @@ const uploadQueueRouter = t.router({
     .input(
       z.object({
         // Row IDs are the canonical identifier — conceptKey may be null in inbox.
-        primaryIds: z.array(z.number()).min(1),
-        secondaryIds: z.array(z.number()),
+        // Backward-compat: also accept the old conceptKey-based protocol so a
+        // stale client bundle doesn't break.
+        primaryIds: z.array(z.number()).min(1).optional(),
+        secondaryIds: z.array(z.number()).optional(),
+        primaryConceptKey: z.string().optional(),
+        secondaryConceptKeys: z.array(z.string()).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      const primaryRows = await db
-        .select()
-        .from(schema.uploadQueue)
-        .where(inArray(schema.uploadQueue.id, input.primaryIds));
-      if (primaryRows.length === 0) throw new Error("Primary rows not found");
-      const primary = primaryRows[0];
+      console.log("[merge] input:", JSON.stringify(input));
+      try {
+        // Resolve primary + secondary row IDs from either protocol.
+        let primaryIds: number[] = input.primaryIds ?? [];
+        let secondaryIds: number[] = input.secondaryIds ?? [];
 
-      // Pick a canonical conceptKey for the merged group.
-      // Prefer the primary's existing conceptKey; fall back to a generated one.
-      const canonicalKey =
-        primary.conceptKey ||
-        [
-          primary.brand || "brand",
-          primary.initiative || "init",
-          primary.variation || "var",
-          primary.angle || "ang",
-          primary.source || "src",
-          primary.product || "prod",
-          primary.contentType || "ct",
-          primary.creativeType || "cr",
-          primary.copySlug || "copy",
-          primary.filename || "file",
-          primary.date || "date",
-          `merge${primary.id}`,
-        ].join("__");
-
-      // Ensure all primary rows share the canonical conceptKey.
-      await db
-        .update(schema.uploadQueue)
-        .set({ conceptKey: canonicalKey, updatedAt: sql`now()` })
-        .where(inArray(schema.uploadQueue.id, input.primaryIds));
-
-      const primaryDims = new Set(primaryRows.map((r) => r.dimensions));
-      let merged = 0;
-      let skipped = 0;
-
-      const secondaryRows = input.secondaryIds.length
-        ? await db
-            .select()
+        if (primaryIds.length === 0 && input.primaryConceptKey) {
+          const rows = await db
+            .select({ id: schema.uploadQueue.id })
             .from(schema.uploadQueue)
-            .where(inArray(schema.uploadQueue.id, input.secondaryIds))
-        : [];
-
-      for (const row of secondaryRows) {
-        // If primary already has this dimension, delete the duplicate.
-        if (primaryDims.has(row.dimensions)) {
-          await db
-            .delete(schema.uploadQueue)
-            .where(eq(schema.uploadQueue.id, row.id));
-          skipped++;
-          continue;
+            .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey));
+          primaryIds = rows.map((r) => r.id);
+        }
+        if (secondaryIds.length === 0 && input.secondaryConceptKeys?.length) {
+          const rows = await db
+            .select({ id: schema.uploadQueue.id })
+            .from(schema.uploadQueue)
+            .where(inArray(schema.uploadQueue.conceptKey, input.secondaryConceptKeys));
+          secondaryIds = rows.map((r) => r.id);
         }
 
-        // Otherwise, merge: inherit primary's naming fields + canonical conceptKey.
-        const newAdName = generateAdName({
-          handle: primary.handle || "korruscircadian",
-          brand: primary.brand,
-          initiative: primary.initiative,
-          variation: primary.variation,
-          angle: primary.angle,
-          source: primary.source,
-          product: primary.product,
-          contentType: primary.contentType,
-          creativeType: primary.creativeType,
-          dimensions: row.dimensions,
-          copySlug: primary.copySlug,
-          filename: primary.filename,
-          date: primary.date,
-        });
+        if (primaryIds.length === 0) {
+          throw new Error("No primary rows resolved from input");
+        }
 
+        const primaryRows = await db
+          .select()
+          .from(schema.uploadQueue)
+          .where(inArray(schema.uploadQueue.id, primaryIds));
+        if (primaryRows.length === 0) {
+          throw new Error(`Primary rows not found for IDs: ${primaryIds.join(",")}`);
+        }
+        const primary = primaryRows[0];
+
+        // Pick a canonical conceptKey for the merged group.
+        const canonicalKey =
+          (primary.conceptKey && primary.conceptKey.trim()) ||
+          [
+            primary.brand || "brand",
+            primary.initiative || "init",
+            primary.variation || "var",
+            primary.angle || "ang",
+            primary.source || "src",
+            primary.product || "prod",
+            primary.contentType || "ct",
+            primary.creativeType || "cr",
+            primary.copySlug || "copy",
+            primary.filename || "file",
+            primary.date || "date",
+            `merge${primary.id}`,
+          ].join("__");
+
+        // Ensure all primary rows share the canonical conceptKey.
         await db
           .update(schema.uploadQueue)
-          .set({
+          .set({ conceptKey: canonicalKey, updatedAt: sql`now()` })
+          .where(inArray(schema.uploadQueue.id, primaryIds));
+
+        const primaryDims = new Set(primaryRows.map((r) => r.dimensions));
+        let merged = 0;
+        let skipped = 0;
+
+        const secondaryRows = secondaryIds.length
+          ? await db
+              .select()
+              .from(schema.uploadQueue)
+              .where(inArray(schema.uploadQueue.id, secondaryIds))
+          : [];
+
+        for (const row of secondaryRows) {
+          if (primaryDims.has(row.dimensions)) {
+            await db
+              .delete(schema.uploadQueue)
+              .where(eq(schema.uploadQueue.id, row.id));
+            skipped++;
+            continue;
+          }
+
+          const newAdName = generateAdName({
+            handle: primary.handle || "korruscircadian",
             brand: primary.brand,
             initiative: primary.initiative,
             variation: primary.variation,
@@ -528,19 +539,42 @@ const uploadQueueRouter = t.router({
             product: primary.product,
             contentType: primary.contentType,
             creativeType: primary.creativeType,
+            dimensions: row.dimensions,
             copySlug: primary.copySlug,
             filename: primary.filename,
             date: primary.date,
-            conceptKey: canonicalKey,
-            generatedAdName: newAdName,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(schema.uploadQueue.id, row.id));
+          });
 
-        primaryDims.add(row.dimensions);
-        merged++;
+          await db
+            .update(schema.uploadQueue)
+            .set({
+              brand: primary.brand,
+              initiative: primary.initiative,
+              variation: primary.variation,
+              angle: primary.angle,
+              source: primary.source,
+              product: primary.product,
+              contentType: primary.contentType,
+              creativeType: primary.creativeType,
+              copySlug: primary.copySlug,
+              filename: primary.filename,
+              date: primary.date,
+              conceptKey: canonicalKey,
+              generatedAdName: newAdName,
+              updatedAt: sql`now()`,
+            })
+            .where(eq(schema.uploadQueue.id, row.id));
+
+          primaryDims.add(row.dimensions);
+          merged++;
+        }
+        const result = { success: true, merged, skipped, conceptKey: canonicalKey };
+        console.log("[merge] success:", result);
+        return result;
+      } catch (err: any) {
+        console.error("[merge] FAILED:", err?.message || err, "\nstack:", err?.stack);
+        throw new Error(`Merge failed: ${err?.message || String(err)}`);
       }
-      return { success: true, merged, skipped, conceptKey: canonicalKey };
     }),
 });
 
