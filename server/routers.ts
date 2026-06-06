@@ -441,41 +441,85 @@ const uploadQueueRouter = t.router({
   merge: publicProcedure
     .input(
       z.object({
-        primaryConceptKey: z.string(),
-        secondaryConceptKeys: z.array(z.string()),
+        // Row IDs are the canonical identifier — conceptKey may be null in inbox.
+        primaryIds: z.array(z.number()).min(1),
+        secondaryIds: z.array(z.number()),
       })
     )
     .mutation(async ({ input }) => {
-      // Fetch all primary rows and track which dimensions already exist
       const primaryRows = await db
         .select()
         .from(schema.uploadQueue)
-        .where(eq(schema.uploadQueue.conceptKey, input.primaryConceptKey));
+        .where(inArray(schema.uploadQueue.id, input.primaryIds));
+      if (primaryRows.length === 0) throw new Error("Primary rows not found");
       const primary = primaryRows[0];
-      if (!primary) throw new Error("Primary concept not found");
+
+      // Pick a canonical conceptKey for the merged group.
+      // Prefer the primary's existing conceptKey; fall back to a generated one.
+      const canonicalKey =
+        primary.conceptKey ||
+        [
+          primary.brand || "brand",
+          primary.initiative || "init",
+          primary.variation || "var",
+          primary.angle || "ang",
+          primary.source || "src",
+          primary.product || "prod",
+          primary.contentType || "ct",
+          primary.creativeType || "cr",
+          primary.copySlug || "copy",
+          primary.filename || "file",
+          primary.date || "date",
+          `merge${primary.id}`,
+        ].join("__");
+
+      // Ensure all primary rows share the canonical conceptKey.
+      await db
+        .update(schema.uploadQueue)
+        .set({ conceptKey: canonicalKey, updatedAt: sql`now()` })
+        .where(inArray(schema.uploadQueue.id, input.primaryIds));
 
       const primaryDims = new Set(primaryRows.map((r) => r.dimensions));
       let merged = 0;
       let skipped = 0;
 
-      for (const sourceKey of input.secondaryConceptKeys) {
-        const sourceRows = await db
-          .select()
-          .from(schema.uploadQueue)
-          .where(eq(schema.uploadQueue.conceptKey, sourceKey));
+      const secondaryRows = input.secondaryIds.length
+        ? await db
+            .select()
+            .from(schema.uploadQueue)
+            .where(inArray(schema.uploadQueue.id, input.secondaryIds))
+        : [];
 
-        for (const row of sourceRows) {
-          // If primary already has this dimension, delete the duplicate
-          if (primaryDims.has(row.dimensions)) {
-            await db.delete(schema.uploadQueue)
-              .where(eq(schema.uploadQueue.id, row.id));
-            skipped++;
-            continue;
-          }
+      for (const row of secondaryRows) {
+        // If primary already has this dimension, delete the duplicate.
+        if (primaryDims.has(row.dimensions)) {
+          await db
+            .delete(schema.uploadQueue)
+            .where(eq(schema.uploadQueue.id, row.id));
+          skipped++;
+          continue;
+        }
 
-          // Otherwise, merge it in with the primary's naming fields
-          const newAdName = generateAdName({
-            handle: primary.handle || "korruscircadian",
+        // Otherwise, merge: inherit primary's naming fields + canonical conceptKey.
+        const newAdName = generateAdName({
+          handle: primary.handle || "korruscircadian",
+          brand: primary.brand,
+          initiative: primary.initiative,
+          variation: primary.variation,
+          angle: primary.angle,
+          source: primary.source,
+          product: primary.product,
+          contentType: primary.contentType,
+          creativeType: primary.creativeType,
+          dimensions: row.dimensions,
+          copySlug: primary.copySlug,
+          filename: primary.filename,
+          date: primary.date,
+        });
+
+        await db
+          .update(schema.uploadQueue)
+          .set({
             brand: primary.brand,
             initiative: primary.initiative,
             variation: primary.variation,
@@ -484,37 +528,19 @@ const uploadQueueRouter = t.router({
             product: primary.product,
             contentType: primary.contentType,
             creativeType: primary.creativeType,
-            dimensions: row.dimensions,
             copySlug: primary.copySlug,
             filename: primary.filename,
             date: primary.date,
-          });
+            conceptKey: canonicalKey,
+            generatedAdName: newAdName,
+            updatedAt: sql`now()`,
+          })
+          .where(eq(schema.uploadQueue.id, row.id));
 
-          await db.update(schema.uploadQueue)
-            .set({
-              brand: primary.brand,
-              initiative: primary.initiative,
-              variation: primary.variation,
-              angle: primary.angle,
-              source: primary.source,
-              product: primary.product,
-              contentType: primary.contentType,
-              creativeType: primary.creativeType,
-              copySlug: primary.copySlug,
-              filename: primary.filename,
-              date: primary.date,
-              conceptKey: input.primaryConceptKey,
-              generatedAdName: newAdName,
-              updatedAt: sql`now()`,
-            })
-            .where(eq(schema.uploadQueue.id, row.id));
-
-          // Track the newly added dimension so subsequent groups don't duplicate it
-          primaryDims.add(row.dimensions);
-          merged++;
-        }
+        primaryDims.add(row.dimensions);
+        merged++;
       }
-      return { success: true, merged, skipped };
+      return { success: true, merged, skipped, conceptKey: canonicalKey };
     }),
 });
 

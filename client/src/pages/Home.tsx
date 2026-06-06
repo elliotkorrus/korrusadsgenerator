@@ -3321,8 +3321,17 @@ export default function Home() {
       {showMergeDialog && selectedKeys.size >= 2 && (
         <MergeDialog
           groups={grouped.filter((g) => selectedKeys.has(g.key))}
-          onConfirm={(primaryConceptKey, secondaryConceptKeys) => {
-            mergeMut.mutate({ primaryConceptKey, secondaryConceptKeys });
+          onConfirm={(primaryKey, secondaryKeys) => {
+            const selectedGroups = grouped.filter((g) => selectedKeys.has(g.key));
+            const primaryGroup = selectedGroups.find((g) => g.key === primaryKey);
+            const secondaryGroups = selectedGroups.filter((g) => secondaryKeys.includes(g.key));
+            if (!primaryGroup) {
+              toast.error("Merge failed", "Primary concept not found");
+              return;
+            }
+            const primaryIds = primaryGroup.rows.map((r) => r.id);
+            const secondaryIds = secondaryGroups.flatMap((g) => g.rows.map((r) => r.id));
+            mergeMut.mutate({ primaryIds, secondaryIds });
           }}
           onClose={() => setShowMergeDialog(false)}
           isLoading={mergeMut.isPending}
