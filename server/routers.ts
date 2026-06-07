@@ -486,22 +486,29 @@ const uploadQueueRouter = t.router({
         const primary = primaryRows[0];
 
         // Pick a canonical conceptKey for the merged group.
-        const canonicalKey =
-          (primary.conceptKey && primary.conceptKey.trim()) ||
-          [
-            primary.brand || "brand",
-            primary.initiative || "init",
-            primary.variation || "var",
-            primary.angle || "ang",
-            primary.source || "src",
-            primary.product || "prod",
-            primary.contentType || "ct",
-            primary.creativeType || "cr",
-            primary.copySlug || "copy",
-            primary.filename || "file",
-            primary.date || "date",
-            `merge${primary.id}`,
-          ].join("__");
+        // CRITICAL: the key MUST be unique per merge. If we reused
+        // primary.conceptKey alone, multiple primaries that share the same
+        // baseKey (e.g. same metadata, empty filename) would all end up with
+        // the same conceptKey — and the inbox grouping logic would then
+        // split them back apart because rows.length > dimSet.size.
+        // Suffix with the primary's row ID to guarantee uniqueness.
+        const existingBase = primary.conceptKey && primary.conceptKey.trim();
+        const canonicalKey = existingBase
+          ? `${existingBase}__merge${primary.id}`
+          : [
+              primary.brand || "brand",
+              primary.initiative || "init",
+              primary.variation || "var",
+              primary.angle || "ang",
+              primary.source || "src",
+              primary.product || "prod",
+              primary.contentType || "ct",
+              primary.creativeType || "cr",
+              primary.copySlug || "copy",
+              primary.filename || "file",
+              primary.date || "date",
+              `merge${primary.id}`,
+            ].join("__");
 
         // Ensure all primary rows share the canonical conceptKey.
         await db
