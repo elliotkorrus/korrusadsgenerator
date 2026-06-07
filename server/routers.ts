@@ -210,11 +210,19 @@ const uploadQueueRouter = t.router({
         date: merged.date,
       });
 
-      const newConceptKey = [
-        merged.brand, merged.initiative, merged.variation, merged.angle,
-        merged.source, merged.product, merged.contentType, merged.creativeType,
-        merged.copySlug, merged.date,
-      ].join("__");
+      // Preserve the existing conceptKey if one is already set.
+      // Regenerating from naming fields on every edit would silently undo
+      // any manual Merge / Smart Merge (the merge suffix gets stripped, the
+      // group collapses back to its baseKey, and the inbox grouper then
+      // splits it apart again because rows.length > dimSet.size).
+      // Only synthesize a key when none exists yet.
+      const newConceptKey =
+        current.conceptKey?.trim() ||
+        [
+          merged.brand, merged.initiative, merged.variation, merged.angle,
+          merged.source, merged.product, merged.contentType, merged.creativeType,
+          merged.copySlug, merged.date,
+        ].join("__");
 
       const rows = await db
         .update(schema.uploadQueue)
