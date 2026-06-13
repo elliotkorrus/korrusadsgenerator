@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "../lib/trpc";
-import { ChevronDown, Search, Loader2, X } from "lucide-react";
+import { ChevronDown, Search, Loader2, X, AlertTriangle, RefreshCw } from "lucide-react";
 
 interface AdSetPickerProps {
   value: string; // current adSetId
@@ -39,11 +39,14 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
   const adSets = accountId ? override.data : primary.data;
   const isLoading = accountId ? override.isLoading : primary.isLoading;
   const isError = accountId ? override.isError : primary.isError;
+  const errorMsg = accountId ? (override.error as any)?.message : (primary.error as any)?.message;
+  const refetch = accountId ? override.refetch : primary.refetch;
 
-  // Fall back to text input if API fails or returns empty
-  useEffect(() => {
-    if (isError) setFallbackMode(true);
-  }, [isError]);
+  // NOTE: previously we auto-flipped to fallback (bare text input) on isError.
+  // That hid the real problem — a stale Meta token, a 5xx, etc. — behind a
+  // mute UI that asks for a hard-coded ID. Now the error is shown inside the
+  // dropdown with a retry button, and fallback is only entered when the user
+  // explicitly clicks "Enter ID manually".
 
   // Close on outside click
   useEffect(() => {
@@ -206,6 +209,32 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
               <div className="flex items-center justify-center py-6 gap-2" style={{ color: "var(--text-muted)" }}>
                 <Loader2 size={14} className="animate-spin" />
                 <span className="text-xs">Loading ad sets...</span>
+              </div>
+            ) : isError ? (
+              <div className="py-4 px-3 flex flex-col items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle size={13} style={{ color: "#f59e0b" }} />
+                  <p className="text-xs font-semibold" style={{ color: "#f59e0b" }}>Couldn't load ad sets</p>
+                </div>
+                <p className="text-[10px] text-center leading-snug" style={{ color: "var(--text-muted)", maxWidth: 280 }}>
+                  {errorMsg ? errorMsg.slice(0, 180) : "Meta API call failed. Most often this is an expired token — check Meta Settings."}
+                </p>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <button
+                    onClick={() => refetch()}
+                    className="text-[10px] px-2 py-1 rounded flex items-center gap-1 transition-colors"
+                    style={{ color: "#60A7C8", background: "rgba(0,153,198,0.10)", border: "1px solid rgba(0,153,198,0.25)" }}
+                  >
+                    <RefreshCw size={10} /> Retry
+                  </button>
+                  <button
+                    onClick={() => setFallbackMode(true)}
+                    className="text-[10px] px-2 py-1 rounded transition-colors"
+                    style={{ color: "var(--text-muted)", background: "transparent", border: "1px solid var(--surface-3)" }}
+                  >
+                    Enter ID manually
+                  </button>
+                </div>
               </div>
             ) : filtered.length === 0 ? (
               <div className="py-4 text-center">
