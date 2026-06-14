@@ -75,18 +75,34 @@ app.post("/api/upload-stream", async (req, res) => {
   const filename = (req.headers["x-filename"] as string) || "upload.bin";
   const mimeType = (req.headers["content-type"] as string) || "application/octet-stream";
   const contentLength = Number(req.headers["content-length"] || 0);
+  const sizeMB = (contentLength / (1024 * 1024)).toFixed(1);
+  console.log(`[upload-stream] start filename=${filename} mime=${mimeType} size=${sizeMB}MB`);
 
   if (!ALLOWED_STREAM_MIMES.has(mimeType)) {
+    console.warn(`[upload-stream] rejected: bad mime "${mimeType}"`);
     res.status(400).json({ error: `mimeType "${mimeType}" not allowed. Accepted: images and videos.` });
     return;
   }
   if (!contentLength || contentLength <= 0) {
+    console.warn(`[upload-stream] rejected: missing content-length`);
     res.status(400).json({ error: "content-length header required" });
     return;
   }
 
+  // Surface low-level network failures (client disconnect, connection reset)
+  // explicitly so they don't bubble up as a silent "Failed to fetch".
+  req.on("error", (e) => {
+    console.error(`[upload-stream] request stream error:`, e.message);
+  });
+  req.on("aborted", () => {
+    console.warn(`[upload-stream] request aborted by client`);
+  });
+
+  const started = Date.now();
   try {
     const result = await streamUploadToR2(req, filename, mimeType, contentLength);
+    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    console.log(`[upload-stream] success filename=${filename} size=${sizeMB}MB elapsed=${elapsed}s key=${result.key}`);
     res.json({
       fileUrl: result.publicUrl,
       fileKey: result.key,
@@ -95,6 +111,8 @@ app.post("/api/upload-stream", async (req, res) => {
       originalName: filename,
     });
   } catch (err: any) {
+    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    console.error(`[upload-stream] FAILED filename=${filename} elapsed=${elapsed}s error="${err?.message}" name="${err?.name}" code="${err?.Code || err?.code}"`);
     logger.error("Streaming R2 upload failed", { error: err.message });
     res.status(500).json({ error: `Upload failed: ${err.message}` });
   }
