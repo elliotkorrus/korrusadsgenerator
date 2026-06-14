@@ -9,7 +9,7 @@ import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
-import { uploadToR2, getR2PresignedPutUrl } from "./r2.js";
+import { uploadToR2, getR2PresignedPutUrl, ensureR2CorsConfigured } from "./r2.js";
 import { logger } from "./logger.js";
 import { uploadState } from "./upload-state.js";
 
@@ -832,6 +832,10 @@ if (process.env.NODE_ENV === "production") {
 const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3002) : 3002;
 const server = app.listen(PORT, () => {
   logger.info("Server started", { port: PORT, env: process.env.NODE_ENV || "development" });
+  // Configure R2 CORS so direct browser PUTs from the dashboard work.
+  // Fire-and-forget — if it fails, we log and move on. The legacy
+  // /api/upload path still works without CORS.
+  ensureR2CorsConfigured();
 });
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────

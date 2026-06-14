@@ -1,7 +1,7 @@
 /**
  * Cloudflare R2 upload helper (S3-compatible)
  */
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, PutBucketCorsCommand, GetBucketCorsCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import path from "path";
 
@@ -25,6 +25,47 @@ function getS3(): S3Client {
     });
   }
   return _s3;
+}
+
+/**
+ * Make sure the R2 bucket allows direct browser PUTs from our dashboard
+ * origins. Without CORS, presigned uploads from the browser fail with a
+ * CORS error. We call this on server startup so the user never has to
+ * touch the Cloudflare dashboard.
+ *
+ * Idempotent: if the policy is already correct, the PUT is a no-op.
+ */
+const REQUIRED_CORS_ORIGINS = [
+  "https://korrusadsgenerator-production.up.railway.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
+
+export async function ensureR2CorsConfigured(): Promise<void> {
+  try {
+    // Always overwrite — small JSON, cheap call. Skip the existence check
+    // since we want a known-good policy regardless of prior state.
+    await getS3().send(
+      new PutBucketCorsCommand({
+        Bucket: R2_BUCKET,
+        CORSConfiguration: {
+          CORSRules: [
+            {
+              AllowedOrigins: REQUIRED_CORS_ORIGINS,
+              AllowedMethods: ["PUT", "GET", "HEAD"],
+              AllowedHeaders: ["*"],
+              MaxAgeSeconds: 3000,
+            },
+          ],
+        },
+      })
+    );
+    console.log("[R2] CORS policy configured for bucket", R2_BUCKET);
+  } catch (err: any) {
+    console.error("[R2] Failed to configure CORS:", err?.message || err);
+    // Don't crash the server — uploads through /api/upload still work,
+    // it's only the presigned direct-to-R2 path that needs CORS.
+  }
 }
 
 function generateKey(originalName: string): string {
