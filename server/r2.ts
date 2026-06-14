@@ -3,6 +3,8 @@
  */
 import { S3Client, PutObjectCommand, PutBucketCorsCommand, GetBucketCorsCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Upload } from "@aws-sdk/lib-storage";
+import { Readable } from "stream";
 import path from "path";
 
 const R2_BUCKET = process.env.R2_BUCKET || "korrus-ads";
@@ -66,6 +68,41 @@ export async function ensureR2CorsConfigured(): Promise<void> {
     // Don't crash the server — uploads through /api/upload still work,
     // it's only the presigned direct-to-R2 path that needs CORS.
   }
+}
+
+/**
+ * Stream a request body straight to R2 via lib-storage's multipart Upload.
+ * No buffering — bytes flow request → R2 chunk-by-chunk. This avoids both
+ * the memory spike that was killing Railway containers on big videos AND
+ * the CORS dance needed for direct browser → R2 PUTs.
+ *
+ * Multipart parts default to 5MB each, uploaded with 4 concurrent connections.
+ */
+export async function streamUploadToR2(
+  body: Readable,
+  originalName: string,
+  mimeType: string,
+  contentLength?: number
+): Promise<{ publicUrl: string; key: string; size: number }> {
+  const key = generateKey(originalName);
+  const uploader = new Upload({
+    client: getS3(),
+    params: {
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: body,
+      ContentType: mimeType,
+      ...(contentLength ? { ContentLength: contentLength } : {}),
+    },
+    queueSize: 4,
+    partSize: 5 * 1024 * 1024,
+  });
+  await uploader.done();
+  return {
+    publicUrl: `${R2_PUBLIC_URL}/${key}`,
+    key,
+    size: contentLength ?? 0,
+  };
 }
 
 function generateKey(originalName: string): string {

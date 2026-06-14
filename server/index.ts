@@ -9,7 +9,7 @@ import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
-import { uploadToR2, getR2PresignedPutUrl, ensureR2CorsConfigured } from "./r2.js";
+import { uploadToR2, getR2PresignedPutUrl, ensureR2CorsConfigured, streamUploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
 import { uploadState } from "./upload-state.js";
 
@@ -63,6 +63,43 @@ const ALLOWED_PRESIGN_MIMES = new Set([
   "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
   "video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska",
 ]);
+// Streaming upload — bytes flow request → R2 chunk-by-chunk without ever
+// being buffered in memory. No CORS needed (server-to-R2), no memory
+// spike on big videos. Send the file as the raw POST body with
+// `Content-Type` = the file's mime and `X-Filename` = the original name.
+const ALLOWED_STREAM_MIMES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+  "video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska",
+]);
+app.post("/api/upload-stream", async (req, res) => {
+  const filename = (req.headers["x-filename"] as string) || "upload.bin";
+  const mimeType = (req.headers["content-type"] as string) || "application/octet-stream";
+  const contentLength = Number(req.headers["content-length"] || 0);
+
+  if (!ALLOWED_STREAM_MIMES.has(mimeType)) {
+    res.status(400).json({ error: `mimeType "${mimeType}" not allowed. Accepted: images and videos.` });
+    return;
+  }
+  if (!contentLength || contentLength <= 0) {
+    res.status(400).json({ error: "content-length header required" });
+    return;
+  }
+
+  try {
+    const result = await streamUploadToR2(req, filename, mimeType, contentLength);
+    res.json({
+      fileUrl: result.publicUrl,
+      fileKey: result.key,
+      fileMimeType: mimeType,
+      fileSize: contentLength,
+      originalName: filename,
+    });
+  } catch (err: any) {
+    logger.error("Streaming R2 upload failed", { error: err.message });
+    res.status(500).json({ error: `Upload failed: ${err.message}` });
+  }
+});
+
 app.post("/api/r2-presign", express.json(), async (req, res) => {
   const { filename, mimeType } = req.body as { filename?: string; mimeType?: string };
   if (!filename || typeof filename !== "string") {
@@ -837,6 +874,12 @@ const server = app.listen(PORT, () => {
   // /api/upload path still works without CORS.
   ensureR2CorsConfigured();
 });
+
+// Long-running streaming uploads (100MB+ videos) need generous socket
+// timeouts so Node doesn't kill the connection mid-stream.
+server.requestTimeout = 0;        // no timeout on the request itself
+server.headersTimeout = 60_000;   // 60s to receive headers
+server.keepAliveTimeout = 65_000; // 65s idle keep-alive
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 async function gracefulShutdown(signal: string) {

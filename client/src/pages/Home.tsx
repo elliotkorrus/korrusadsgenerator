@@ -1758,37 +1758,25 @@ export default function Home() {
     const token = localStorage.getItem("app-token");
     const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
     try {
-      // Direct browser → R2 upload via presigned URL.
-      // Previously we POSTed files through Railway (/api/upload), which timed
-      // out for 100MB+ videos because the bytes had to traverse twice. Now we
-      // ask the server for a short-lived PUT URL and stream straight to R2.
+      // Streaming upload through Railway → R2. The server pipes the request
+      // body straight to R2 via lib-storage's multipart Upload (no buffering,
+      // no memory spike). The browser sends the file as the raw POST body —
+      // no FormData, so no multer in the path either.
+      // We don't use presigned direct-to-R2 here because that needs CORS on
+      // the bucket, which is fragile to configure from the dashboard.
       const uploadOne = async (file: File) => {
-        // 1. Ask server for a presigned PUT URL.
-        const presignRes = await fetch("/api/r2-presign", {
+        const r = await fetch("/api/upload-stream", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders },
-          body: JSON.stringify({ filename: file.name, mimeType: file.type || "application/octet-stream" }),
-        });
-        const presign = await presignRes.json();
-        if (!presignRes.ok || !presign.uploadUrl) {
-          throw new Error(presign.error || "Couldn't get upload URL");
-        }
-        // 2. PUT the file directly to R2 (bypasses Railway).
-        const putRes = await fetch(presign.uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": file.type || "application/octet-stream" },
+          headers: {
+            ...authHeaders,
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Filename": file.name,
+          },
           body: file,
         });
-        if (!putRes.ok) {
-          const errText = await putRes.text().catch(() => "");
-          throw new Error(`R2 upload failed (${putRes.status}): ${errText.slice(0, 200)}`);
-        }
-        return {
-          fileUrl: presign.publicUrl as string,
-          fileKey: presign.key as string,
-          fileMimeType: file.type || "application/octet-stream",
-          fileSize: file.size,
-        };
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "Upload failed");
+        return d as { fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number };
       };
 
       const replaceUploads = await Promise.all(
