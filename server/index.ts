@@ -74,18 +74,17 @@ const ALLOWED_STREAM_MIMES = new Set([
 app.post("/api/upload-stream", async (req, res) => {
   const filename = (req.headers["x-filename"] as string) || "upload.bin";
   const mimeType = (req.headers["content-type"] as string) || "application/octet-stream";
-  const contentLength = Number(req.headers["content-length"] || 0);
-  const sizeMB = (contentLength / (1024 * 1024)).toFixed(1);
-  console.log(`[upload-stream] start filename=${filename} mime=${mimeType} size=${sizeMB}MB`);
+  // Browsers using streaming body (or proxies that re-chunk) may omit
+  // Content-Length and use Transfer-Encoding: chunked instead. Treat the
+  // header as a hint only — fall back to "unknown" for the lib-storage
+  // multipart upload, which doesn't actually need a known length.
+  const contentLength = Number(req.headers["content-length"] || 0) || undefined;
+  const sizeMB = contentLength ? (contentLength / (1024 * 1024)).toFixed(1) : "?";
+  console.log(`[upload-stream] start filename=${filename} mime=${mimeType} size=${sizeMB}MB chunked=${!contentLength}`);
 
   if (!ALLOWED_STREAM_MIMES.has(mimeType)) {
     console.warn(`[upload-stream] rejected: bad mime "${mimeType}"`);
     res.status(400).json({ error: `mimeType "${mimeType}" not allowed. Accepted: images and videos.` });
-    return;
-  }
-  if (!contentLength || contentLength <= 0) {
-    console.warn(`[upload-stream] rejected: missing content-length`);
-    res.status(400).json({ error: "content-length header required" });
     return;
   }
 
@@ -107,7 +106,7 @@ app.post("/api/upload-stream", async (req, res) => {
       fileUrl: result.publicUrl,
       fileKey: result.key,
       fileMimeType: mimeType,
-      fileSize: contentLength,
+      fileSize: contentLength ?? 0,
       originalName: filename,
     });
   } catch (err: any) {
