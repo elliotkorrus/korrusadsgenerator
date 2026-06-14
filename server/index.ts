@@ -9,7 +9,7 @@ import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
 import { eq, sql } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
-import { uploadToR2 } from "./r2.js";
+import { uploadToR2, getR2PresignedPutUrl } from "./r2.js";
 import { logger } from "./logger.js";
 import { uploadState } from "./upload-state.js";
 
@@ -55,6 +55,32 @@ app.use("/uploads", express.static(uploadsDir));
 // File upload endpoint — stores in memory, returns base64 data URI
 // This avoids Railway's ephemeral disk (files lost on redeploy)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
+
+// Presigned PUT URL for direct browser→R2 uploads. Use this for large files
+// (videos especially) — Railway's request timeout was killing 100MB+ uploads
+// because the bytes had to traverse twice through the server-proxy path.
+const ALLOWED_PRESIGN_MIMES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+  "video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska",
+]);
+app.post("/api/r2-presign", express.json(), async (req, res) => {
+  const { filename, mimeType } = req.body as { filename?: string; mimeType?: string };
+  if (!filename || typeof filename !== "string") {
+    res.status(400).json({ error: "filename (string) required" });
+    return;
+  }
+  if (!mimeType || typeof mimeType !== "string" || !ALLOWED_PRESIGN_MIMES.has(mimeType)) {
+    res.status(400).json({ error: `mimeType "${mimeType}" not allowed. Accepted: images and videos.` });
+    return;
+  }
+  try {
+    const result = await getR2PresignedPutUrl(filename, mimeType);
+    res.json(result);
+  } catch (err: any) {
+    logger.error("R2 presign failed", { error: err.message });
+    res.status(500).json({ error: `Presign failed: ${err.message}` });
+  }
+});
 
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) {

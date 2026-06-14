@@ -1758,14 +1758,37 @@ export default function Home() {
     const token = localStorage.getItem("app-token");
     const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
     try {
-      // Step 1: upload all files to R2 in parallel
+      // Direct browser → R2 upload via presigned URL.
+      // Previously we POSTed files through Railway (/api/upload), which timed
+      // out for 100MB+ videos because the bytes had to traverse twice. Now we
+      // ask the server for a short-lived PUT URL and stream straight to R2.
       const uploadOne = async (file: File) => {
-        const fd = new FormData();
-        fd.append("file", file);
-        const r = await fetch("/api/upload", { method: "POST", body: fd, headers: authHeaders });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "R2 upload failed");
-        return d as { fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number };
+        // 1. Ask server for a presigned PUT URL.
+        const presignRes = await fetch("/api/r2-presign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify({ filename: file.name, mimeType: file.type || "application/octet-stream" }),
+        });
+        const presign = await presignRes.json();
+        if (!presignRes.ok || !presign.uploadUrl) {
+          throw new Error(presign.error || "Couldn't get upload URL");
+        }
+        // 2. PUT the file directly to R2 (bypasses Railway).
+        const putRes = await fetch(presign.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!putRes.ok) {
+          const errText = await putRes.text().catch(() => "");
+          throw new Error(`R2 upload failed (${putRes.status}): ${errText.slice(0, 200)}`);
+        }
+        return {
+          fileUrl: presign.publicUrl as string,
+          fileKey: presign.key as string,
+          fileMimeType: file.type || "application/octet-stream",
+          fileSize: file.size,
+        };
       };
 
       const replaceUploads = await Promise.all(
