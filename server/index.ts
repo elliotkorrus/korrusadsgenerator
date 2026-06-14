@@ -690,6 +690,45 @@ app.get("/api/reupload-to-account/status", (_req, res) => {
 });
 
 // ─── Add a new size/asset to a live Meta ad (one concept) ───────────
+// Async job tracking for Manage Assets (Add + Replace). We can't run these
+// synchronously because Meta video upload + processing routinely takes 60-
+// 180s, which Railway's edge proxy may cut off mid-request — surfacing as
+// the dreaded "Failed to fetch" on the client. Pattern mirrors the existing
+// duplicate-ads-with-url async flow.
+type ManageAssetsJob = {
+  id: string;
+  kind: "add" | "replace";
+  done: boolean;
+  startedAt: number;
+  result?: any;
+  error?: string;
+};
+const manageAssetsJobs = new Map<string, ManageAssetsJob>();
+
+function startManageAssetsJob(kind: "add" | "replace", work: () => Promise<any>): string {
+  const id = `${kind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const job: ManageAssetsJob = { id, kind, done: false, startedAt: Date.now() };
+  manageAssetsJobs.set(id, job);
+  // Reap jobs older than 10 minutes so the map doesn't grow forever.
+  for (const [k, j] of manageAssetsJobs) {
+    if (j.done && Date.now() - j.startedAt > 10 * 60 * 1000) manageAssetsJobs.delete(k);
+  }
+  (async () => {
+    try {
+      const result = await work();
+      job.result = result;
+    } catch (err: any) {
+      console.error(`[manage-assets:${kind}] FAILED jobId=${id} error="${err?.message}"`);
+      job.error = err?.message || String(err);
+    } finally {
+      job.done = true;
+      const elapsed = ((Date.now() - job.startedAt) / 1000).toFixed(1);
+      console.log(`[manage-assets:${kind}] done jobId=${id} elapsed=${elapsed}s success=${!job.error}`);
+    }
+  })();
+  return id;
+}
+
 app.post("/api/add-ad-assets", express.json(), async (req, res) => {
   const { conceptKey, additions } = req.body as {
     conceptKey?: string;
@@ -710,17 +749,24 @@ app.post("/api/add-ad-assets", express.json(), async (req, res) => {
     res.status(400).json({ success: false, error: "additions (non-empty array) required" });
     return;
   }
-  try {
-    const result = await addAdAssets(conceptKey, additions);
-    if (result.success) {
-      res.json(result);
-    } else {
-      res.status(500).json(result);
-    }
-  } catch (err: any) {
-    logger.error("Add ad assets failed", { error: err.message });
-    res.status(500).json({ success: false, error: err.message });
+  const jobId = startManageAssetsJob("add", () => addAdAssets(conceptKey, additions));
+  res.json({ success: true, jobId });
+});
+
+app.get("/api/manage-assets/status/:jobId", (req, res) => {
+  const job = manageAssetsJobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ success: false, error: "Job not found (may have expired)" });
+    return;
   }
+  res.json({
+    success: true,
+    done: job.done,
+    elapsedMs: Date.now() - job.startedAt,
+    kind: job.kind,
+    error: job.error,
+    result: job.result,
+  });
 });
 
 // ─── Replace creative assets on a live Meta ad (one concept at a time) ──
@@ -743,17 +789,8 @@ app.post("/api/replace-ad-assets", express.json(), async (req, res) => {
     res.status(400).json({ success: false, error: "replacements (non-empty array) required" });
     return;
   }
-  try {
-    const result = await replaceAdAssets(conceptKey, replacements);
-    if (result.success) {
-      res.json(result);
-    } else {
-      res.status(500).json(result);
-    }
-  } catch (err: any) {
-    logger.error("Replace ad assets failed", { error: err.message });
-    res.status(500).json({ success: false, error: err.message });
-  }
+  const jobId = startManageAssetsJob("replace", () => replaceAdAssets(conceptKey, replacements));
+  res.json({ success: true, jobId });
 });
 
 // ─── Send to Meta (single ad — finds its concept group automatically) ──

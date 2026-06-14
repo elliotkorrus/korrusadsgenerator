@@ -1790,6 +1790,30 @@ export default function Home() {
         })
       );
 
+      // Steps 2 & 3 now use the async job pattern. The endpoints return a
+      // jobId immediately (avoiding Railway's edge-proxy timeout on long
+      // Meta video processing), and we poll until the job completes.
+      const pollJob = async (jobId: string, label: string) => {
+        const POLL_MS = 2000;
+        const MAX_WAIT_MS = 10 * 60 * 1000; // 10 min ceiling
+        const started = Date.now();
+        while (true) {
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          if (Date.now() - started > MAX_WAIT_MS) {
+            throw new Error(`${label} job did not complete within 10 minutes`);
+          }
+          const sRes = await fetch(`/api/manage-assets/status/${jobId}`, { headers: authHeaders });
+          const sData = await sRes.json();
+          if (!sRes.ok || !sData.success) {
+            throw new Error(sData.error || `${label} status check failed`);
+          }
+          if (sData.done) {
+            if (sData.error) throw new Error(sData.error);
+            return sData.result;
+          }
+        }
+      };
+
       // Step 2: replacements first (so additions hit a creative that's already up-to-date)
       if (replaceUploads.length > 0) {
         const res = await fetch("/api/replace-ad-assets", {
@@ -1798,7 +1822,8 @@ export default function Home() {
           body: JSON.stringify({ conceptKey: replaceAssetsConceptKey, replacements: replaceUploads }),
         });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || "Replace failed");
+        if (!res.ok || !data.success || !data.jobId) throw new Error(data.error || "Replace failed");
+        await pollJob(data.jobId, "Replace");
       }
 
       // Step 3: additions
@@ -1809,7 +1834,8 @@ export default function Home() {
           body: JSON.stringify({ conceptKey: replaceAssetsConceptKey, additions: addUploads }),
         });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || "Add failed");
+        if (!res.ok || !data.success || !data.jobId) throw new Error(data.error || "Add failed");
+        await pollJob(data.jobId, "Add");
       }
 
       toast.success(
