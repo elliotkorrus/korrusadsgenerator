@@ -50,6 +50,7 @@ import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReuploadToAccountDialog from "../components/ReuploadToAccountDialog";
+import CloneToCampaignDialog from "../components/CloneToCampaignDialog";
 import LazyThumbnail from "../components/LazyThumbnail";
 
 const FOCUS_VIEWS = [
@@ -1620,6 +1621,10 @@ export default function Home() {
   const [showReuploadDialog, setShowReuploadDialog] = useState(false);
   const [reuploadSourceAdIds, setReuploadSourceAdIds] = useState<number[]>([]);
 
+  // Clone-to-new-campaign (same account, different ad set) state
+  const [showCloneCampaignDialog, setShowCloneCampaignDialog] = useState(false);
+  const [cloneCampaignSourceAdIds, setCloneCampaignSourceAdIds] = useState<number[]>([]);
+
   // Duplicate-with-new-URL state
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [duplicateSourceAdIds, setDuplicateSourceAdIds] = useState<number[]>([]);
@@ -2498,6 +2503,20 @@ export default function Home() {
                 {pausingAds === "ACTIVE" && pauseProgress
                   ? `▶ ${pauseProgress.completed}/${pauseProgress.total}…`
                   : "▶ Resume"}
+              </button>
+              <button
+                onClick={() => {
+                  const uploadedIds = selectedIds.filter((id) =>
+                    allItems.find((i) => i.id === id)?.status === "uploaded"
+                  );
+                  setCloneCampaignSourceAdIds(uploadedIds);
+                  setShowCloneCampaignDialog(true);
+                }}
+                className="px-2.5 py-1 text-xs rounded-md transition-colors"
+                style={{ background: "rgba(96,167,200,0.1)", color: "#60A7C8", border: "1px solid rgba(96,167,200,0.3)" }}
+                title="Clone selected uploaded ads into a different ad set (e.g. a new campaign with a different objective). Source ads stay running."
+              >
+                ⎘ Clone to new campaign
               </button>
               <button
                 onClick={() => {
@@ -4012,6 +4031,15 @@ export default function Home() {
         <ReuploadToAccountDialog
           sourceAdIds={reuploadSourceAdIds}
           onClose={() => setShowReuploadDialog(false)}
+          onComplete={() => { utils.queue.list.invalidate(); }}
+        />
+      )}
+
+      {/* Clone selected uploaded ads to a different ad set in the same account */}
+      {showCloneCampaignDialog && cloneCampaignSourceAdIds.length > 0 && (
+        <CloneToCampaignDialog
+          sourceAdIds={cloneCampaignSourceAdIds}
+          onClose={() => setShowCloneCampaignDialog(false)}
           onComplete={() => { utils.queue.list.invalidate(); }}
         />
       )}
