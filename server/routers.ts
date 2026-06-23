@@ -1344,6 +1344,38 @@ const metaSettingsRouter = t.router({
         throw new Error(`Failed to load insights: ${err?.message || "Unknown error"}`);
       }
     }),
+
+  // Duplicate an existing ad set inside the same campaign. Lets the user
+  // skip Ads Manager when they just need a fresh ad set to drop new
+  // creative into. CBO-friendly (campaign owns the budget). After a
+  // successful duplicate we invalidate the in-memory ad-sets cache so
+  // the new ad set shows up in the picker on next read.
+  duplicateAdSet: publicProcedure
+    .input(
+      z.object({
+        sourceAdSetId: z.string().min(1),
+        newName: z.string().optional(),
+        status: z.enum(["ACTIVE", "PAUSED"]).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const { duplicateAdSet } = await import("./meta-upload.js");
+      const result = await duplicateAdSet({
+        sourceAdSetId: input.sourceAdSetId,
+        newName: input.newName,
+        status: input.status,
+      });
+      // Invalidate cache so getAdSets refetches and surfaces the new one.
+      adSetsCache.data = null;
+      adSetsCache.fetchedAt = 0;
+      logAudit("duplicate_ad_set", "ad_set", result.adSetId, {
+        sourceAdSetId: input.sourceAdSetId,
+        campaignId: result.campaignId,
+        campaignName: result.campaignName,
+        newName: result.adSetName,
+      });
+      return result;
+    }),
 });
 
 // ─── Audit Log ─────────────────────────────────────────────────

@@ -2633,3 +2633,86 @@ export async function reuploadAdsToAccount(
     },
   };
 }
+
+// ── Duplicate an ad set inside the same campaign ─────────────────────
+// Meta's /<adset_id>/copies endpoint clones the ad set's targeting,
+// optimization, bid strategy, schedule, DSA fields, etc. exactly. For
+// CBO campaigns there's no per-ad-set budget to thread through — the
+// campaign owns it — so this is a clean one-call duplicate.
+//
+// Lets the user skip the Ads Manager round-trip when they just need a
+// fresh ad set in an existing campaign to drop a new creative into.
+export async function duplicateAdSet(opts: {
+  sourceAdSetId: string;
+  newName?: string;
+  status?: "ACTIVE" | "PAUSED";
+}): Promise<{
+  adSetId: string;
+  adSetName: string;
+  campaignId: string;
+  campaignName: string;
+}> {
+  const metaRows = await db.select().from(schema.metaSettings);
+  const settings = metaRows[0];
+  if (!settings?.accessToken) throw new Error("Meta Settings not configured");
+  const accessToken = settings.accessToken;
+
+  // Look up the source so we can default the name to "<source> - copy"
+  // and return the campaign id/name in the response.
+  const srcRes = await fetch(
+    `${META_BASE}/${opts.sourceAdSetId}?fields=name,campaign{id,name}&access_token=${encodeURIComponent(accessToken)}`
+  );
+  const srcData = await srcRes.json();
+  if (srcData.error) {
+    throw new Error(`Failed to read source ad set: ${srcData.error.message}`);
+  }
+  const sourceName: string = srcData.name || "Ad set";
+  const campaignId: string = srcData.campaign?.id || "";
+  const campaignName: string = srcData.campaign?.name || "";
+
+  const desiredName = (opts.newName?.trim()) || `${sourceName} - copy`;
+  const desiredStatus: "ACTIVE" | "PAUSED" = opts.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
+
+  // 1) Copy the ad set. Meta returns { copied_adset_id }.
+  // status_option sets the cloned ad set's own status; we still rename
+  // in step 2 to honor the user's chosen name verbatim (Meta's
+  // rename_options strategies are constrained to prefix/suffix).
+  const copyParams = new URLSearchParams({
+    status_option: desiredStatus,
+    deep_copy: "false",
+    access_token: accessToken,
+  });
+  const copyRes = await fetch(
+    `${META_BASE}/${opts.sourceAdSetId}/copies?${copyParams.toString()}`,
+    { method: "POST" }
+  );
+  const copyData = await copyRes.json();
+  if (copyData.error) {
+    throw new Error(`Copy failed: ${copyData.error.message}`);
+  }
+  const newAdSetId: string | undefined = copyData.copied_adset_id || copyData.id;
+  if (!newAdSetId) {
+    throw new Error(`Copy returned no adset id: ${JSON.stringify(copyData).slice(0, 200)}`);
+  }
+
+  // 2) Rename the new ad set. Separate POST instead of relying on
+  // Meta's rename_options because those only support prefix/suffix
+  // transforms — they can't set an arbitrary name.
+  const renameRes = await fetch(`${META_BASE}/${newAdSetId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: desiredName, access_token: accessToken }),
+  });
+  const renameData = await renameRes.json();
+  if (renameData.error) {
+    // Non-fatal — the copy succeeded; user can rename in Ads Manager.
+    console.warn(`[duplicateAdSet] rename failed: ${renameData.error.message}`);
+  }
+
+  return {
+    adSetId: newAdSetId,
+    adSetName: desiredName,
+    campaignId,
+    campaignName,
+  };
+}

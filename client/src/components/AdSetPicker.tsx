@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "../lib/trpc";
-import { ChevronDown, Search, Loader2, X, AlertTriangle, RefreshCw } from "lucide-react";
+import { ChevronDown, Search, Loader2, X, AlertTriangle, RefreshCw, Plus, ArrowLeft } from "lucide-react";
 
 interface AdSetPickerProps {
   value: string; // current adSetId
@@ -18,6 +18,13 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
   const [search, setSearch] = useState("");
   const [fallbackMode, setFallbackMode] = useState(false);
   const [fallbackValue, setFallbackValue] = useState(value || "");
+  // Create-new-ad-set sub-flow state. When createMode is true, the picker
+  // body switches to a small form instead of the ad set list.
+  const [createMode, setCreateMode] = useState(false);
+  const [createCampaignId, setCreateCampaignId] = useState("");
+  const [createSourceId, setCreateSourceId] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -41,6 +48,73 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
   const isError = accountId ? override.isError : primary.isError;
   const errorMsg = accountId ? (override.error as any)?.message : (primary.error as any)?.message;
   const refetch = accountId ? override.refetch : primary.refetch;
+
+  // Lets us invalidate the cache after a duplicate so the new ad set
+  // shows up immediately in the list.
+  const utils = trpc.useUtils();
+  const duplicateMut = trpc.meta.duplicateAdSet.useMutation({
+    onSuccess: async (result) => {
+      await utils.meta.getAdSets.invalidate();
+      // Auto-select the newly created ad set on the row we were editing.
+      onSelect(result.adSetId, result.adSetName);
+      setCreateMode(false);
+      setCreateCampaignId("");
+      setCreateSourceId("");
+      setCreateName("");
+      setCreateError(null);
+      setOpen(false);
+    },
+    onError: (err) => {
+      setCreateError(err.message || "Couldn't create ad set");
+    },
+  });
+
+  // Unique campaigns derived from the loaded ad set list (we only show
+  // ACTIVE campaigns in getAdSets so this list is already scoped).
+  const campaigns = useMemo(() => {
+    if (!adSets) return [] as { id: string; name: string }[];
+    const map = new Map<string, string>();
+    for (const s of adSets as any[]) {
+      if (s.campaignId && !map.has(s.campaignId)) {
+        map.set(s.campaignId, s.campaignName || s.campaignId);
+      }
+    }
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [adSets]);
+
+  // Ad sets within the campaign currently chosen in the Create form.
+  const adSetsInCreateCampaign = useMemo(() => {
+    if (!adSets || !createCampaignId) return [] as any[];
+    return (adSets as any[]).filter((s) => s.campaignId === createCampaignId);
+  }, [adSets, createCampaignId]);
+
+  // When the user picks a campaign, default the source ad set to the
+  // first ACTIVE one in that campaign and pre-fill the name field.
+  useEffect(() => {
+    if (!createMode || !createCampaignId) return;
+    if (!createSourceId) {
+      const firstActive = adSetsInCreateCampaign.find((s) => s.status === "ACTIVE") || adSetsInCreateCampaign[0];
+      if (firstActive) {
+        setCreateSourceId(firstActive.id);
+        if (!createName) setCreateName(`${firstActive.name} - copy`);
+      }
+    }
+  }, [createMode, createCampaignId, createSourceId, createName, adSetsInCreateCampaign]);
+
+  // Keep the name in sync when the user switches source ad set, unless
+  // they've already typed something custom.
+  const lastSourceRef = useRef<string>("");
+  useEffect(() => {
+    if (!createMode || !createSourceId) return;
+    if (lastSourceRef.current === createSourceId) return;
+    const src = adSetsInCreateCampaign.find((s) => s.id === createSourceId);
+    if (src && (!createName || createName.endsWith(" - copy"))) {
+      setCreateName(`${src.name} - copy`);
+    }
+    lastSourceRef.current = createSourceId;
+  }, [createMode, createSourceId, adSetsInCreateCampaign, createName]);
 
   // NOTE: previously we auto-flipped to fallback (bare text input) on isError.
   // That hid the real problem — a stale Meta token, a 5xx, etc. — behind a
@@ -157,7 +231,133 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
       </button>
 
       {/* Dropdown */}
-      {open && (
+      {open && createMode && (
+        <div
+          className="absolute z-[100] mt-1 rounded-md shadow-2xl overflow-hidden"
+          style={{
+            background: "var(--surface-1)",
+            border: "1px solid var(--surface-3)",
+            width: "360px",
+            left: 0,
+          }}
+        >
+          <div className="flex items-center gap-2 px-2.5 py-2" style={{ borderBottom: "1px solid var(--surface-3)" }}>
+            <button
+              onClick={() => { setCreateMode(false); setCreateError(null); }}
+              className="p-0.5 rounded hover:bg-white/5"
+              title="Back to ad set list"
+            >
+              <ArrowLeft size={12} style={{ color: "var(--text-muted)" }} />
+            </button>
+            <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+              Create new ad set
+            </span>
+          </div>
+          <div className="px-3 py-3 space-y-2.5">
+            {/* Campaign */}
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide font-semibold mb-1" style={{ color: "var(--text-muted)" }}>
+                Campaign
+              </label>
+              <select
+                value={createCampaignId}
+                onChange={(e) => {
+                  setCreateCampaignId(e.target.value);
+                  setCreateSourceId("");
+                  setCreateName("");
+                  setCreateError(null);
+                }}
+                className="w-full text-xs px-2 py-1.5 rounded outline-none"
+                style={{ background: "var(--surface-0)", border: "1px solid var(--surface-3)", color: "var(--text-primary)" }}
+              >
+                <option value="">Select a campaign…</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Source ad set */}
+            {createCampaignId && (
+              <div>
+                <label className="block text-[10px] uppercase tracking-wide font-semibold mb-1" style={{ color: "var(--text-muted)" }}>
+                  Copy settings from
+                </label>
+                <select
+                  value={createSourceId}
+                  onChange={(e) => setCreateSourceId(e.target.value)}
+                  className="w-full text-xs px-2 py-1.5 rounded outline-none"
+                  style={{ background: "var(--surface-0)", border: "1px solid var(--surface-3)", color: "var(--text-primary)" }}
+                >
+                  {adSetsInCreateCampaign.length === 0 && <option value="">No ad sets in campaign</option>}
+                  {adSetsInCreateCampaign.map((s: any) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.status})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+                  Targeting, optimization, schedule, and DSA fields are cloned exactly.
+                </p>
+              </div>
+            )}
+
+            {/* New name */}
+            {createSourceId && (
+              <div>
+                <label className="block text-[10px] uppercase tracking-wide font-semibold mb-1" style={{ color: "var(--text-muted)" }}>
+                  New ad set name
+                </label>
+                <input
+                  type="text"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  placeholder="Ad set name"
+                  className="w-full text-xs px-2 py-1.5 rounded outline-none"
+                  style={{ background: "var(--surface-0)", border: "1px solid var(--surface-3)", color: "var(--text-primary)" }}
+                />
+              </div>
+            )}
+
+            {createError && (
+              <div className="text-[11px] flex items-start gap-1.5 px-2 py-1.5 rounded" style={{ background: "rgba(248,113,113,0.10)", border: "1px solid rgba(248,113,113,0.3)", color: "#fca5a5" }}>
+                <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                <span>{createError}</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                if (!createSourceId || !createName.trim()) return;
+                setCreateError(null);
+                duplicateMut.mutate({
+                  sourceAdSetId: createSourceId,
+                  newName: createName.trim(),
+                  status: "ACTIVE",
+                });
+              }}
+              disabled={!createSourceId || !createName.trim() || duplicateMut.isPending}
+              className="w-full text-xs font-semibold px-3 py-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+              style={{ background: duplicateMut.isPending ? "rgba(0,153,198,0.4)" : "linear-gradient(135deg, #0099C6, #255C9E)", color: "white", border: "none" }}
+            >
+              {duplicateMut.isPending ? (
+                <>
+                  <Loader2 size={11} className="animate-spin" /> Creating…
+                </>
+              ) : (
+                <>
+                  <Plus size={11} /> Create ad set (ACTIVE)
+                </>
+              )}
+            </button>
+            <p className="text-[10px] text-center" style={{ color: "var(--text-muted)" }}>
+              Starts ACTIVE in Meta — will deliver as soon as ads land in it.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {open && !createMode && (
         <div
           className="absolute z-[100] mt-1 rounded-md shadow-2xl overflow-hidden"
           style={{
@@ -303,11 +503,23 @@ export default function AdSetPicker({ value, displayValue, onSelect, disabled, c
             )}
           </div>
 
-          {/* Manual entry fallback link */}
+          {/* Footer: create new ad set + manual entry fallback */}
           <div
-            className="px-3 py-1.5 flex justify-end"
+            className="px-3 py-1.5 flex items-center justify-between gap-2"
             style={{ borderTop: "1px solid var(--surface-3)" }}
           >
+            <button
+              onClick={() => {
+                setCreateMode(true);
+                setCreateError(null);
+                setSearch("");
+              }}
+              className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded transition-colors"
+              style={{ color: "#60A7C8", background: "rgba(0,153,198,0.08)", border: "1px solid rgba(0,153,198,0.20)" }}
+              title="Duplicate an existing ad set in a campaign to create a new one without leaving the dashboard"
+            >
+              <Plus size={10} /> Create new ad set
+            </button>
             <button
               onClick={() => {
                 setFallbackMode(true);
