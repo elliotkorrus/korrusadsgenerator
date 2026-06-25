@@ -208,37 +208,29 @@ function suggestFromHistory(
   };
 }
 
-// Direct browser → R2 upload via a server-issued presigned PUT URL.
-// Skips Railway entirely for the byte payload, which roughly halves
-// upload time for 100MB+ videos vs going through the server. Used by
-// both the Inbox file drop and the Manage Assets (Replace + Add new
-// sizes) flows. CORS on the bucket is auto-configured at server boot
-// so this works without any Cloudflare-side setup.
+// Upload a file through our own server, which then streams it to R2
+// via lib-storage's multipart Upload. Browser only talks to our origin,
+// so there's NO CORS-on-R2 dependency — works regardless of who owns
+// the Cloudflare account or what permissions the R2 token has.
 //
-// Uses XMLHttpRequest (not fetch) for the PUT step because fetch can't
-// report upload progress to a callback. The presign request stays on
-// fetch since the body is tiny.
+// Uses XMLHttpRequest so we can report upload progress (browser → our
+// server) to a callback for the UI bar. The server pipes the stream
+// to R2 chunk-by-chunk with no buffering, so a 100MB+ video doesn't
+// spike Railway's memory.
 async function directUploadToR2(
   file: File,
   authHeaders: HeadersInit,
   onProgress?: (info: { loaded: number; total: number; bytesPerSec: number }) => void
 ): Promise<{ fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number }> {
   const mimeType = file.type || "application/octet-stream";
-  const presignRes = await fetch("/api/r2-presign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders },
-    body: JSON.stringify({ filename: file.name, mimeType }),
-  });
-  const presign = await presignRes.json();
-  if (!presignRes.ok || !presign.uploadUrl) {
-    throw new Error(presign.error || "Couldn't get upload URL");
-  }
-
-  // XHR PUT with progress reporting.
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", presign.uploadUrl, true);
+    xhr.open("POST", "/api/upload-stream", true);
     xhr.setRequestHeader("Content-Type", mimeType);
+    xhr.setRequestHeader("X-Filename", file.name);
+    for (const [k, v] of Object.entries(authHeaders || {})) {
+      xhr.setRequestHeader(k, v as string);
+    }
     // EWMA-smoothed throughput so the on-screen MB/sec doesn't bounce.
     let lastTs = performance.now();
     let lastLoaded = 0;
@@ -258,24 +250,31 @@ async function directUploadToR2(
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        // Make sure the final 100% tick is reported.
-        onProgress?.({ loaded: file.size, total: file.size, bytesPerSec: smoothedBps });
-        resolve();
+        try {
+          const data = JSON.parse(xhr.responseText);
+          onProgress?.({ loaded: file.size, total: file.size, bytesPerSec: smoothedBps });
+          resolve({
+            fileUrl: data.fileUrl,
+            fileKey: data.fileKey,
+            fileMimeType: data.fileMimeType || mimeType,
+            fileSize: data.fileSize || file.size,
+          });
+        } catch (err: any) {
+          reject(new Error(`Upload succeeded but server response wasn't valid JSON: ${err?.message}`));
+        }
       } else {
-        reject(new Error(`R2 upload failed (${xhr.status}): ${xhr.responseText?.slice(0, 200) || ""}`));
+        let msg = `Upload failed (${xhr.status})`;
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data?.error) msg = data.error;
+        } catch { /* keep generic msg */ }
+        reject(new Error(msg));
       }
     };
-    xhr.onerror = () => reject(new Error("R2 upload failed: network error"));
-    xhr.onabort = () => reject(new Error("R2 upload aborted"));
+    xhr.onerror = () => reject(new Error("Upload failed: network error"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
     xhr.send(file);
   });
-
-  return {
-    fileUrl: presign.publicUrl as string,
-    fileKey: presign.key as string,
-    fileMimeType: mimeType,
-    fileSize: file.size,
-  };
 }
 
 // Dimension badge style
