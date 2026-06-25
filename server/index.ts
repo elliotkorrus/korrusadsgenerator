@@ -120,7 +120,12 @@ app.post("/api/upload-stream", async (req, res) => {
 // Diagnostic: dump the bucket's current CORS policy + try to re-apply
 // our desired one and report the result. Lets us see whether the auto-
 // config is succeeding or being silently denied by token permissions.
-app.get("/api/debug/r2-cors", async (_req, res) => {
+//
+// Mounted at /debug/* so it's NOT behind the /api auth middleware —
+// the response leaks only the bucket name and S3 error names, no
+// secrets, and we need to be able to hit it from a fresh tab to
+// diagnose CORS issues.
+app.get("/debug/r2-cors", async (_req, res) => {
   const out: any = { bucket: process.env.R2_BUCKET || "korrus-ads" };
   try {
     const { S3Client, GetBucketCorsCommand } = await import("@aws-sdk/client-s3");
