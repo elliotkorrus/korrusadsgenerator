@@ -117,6 +117,48 @@ app.post("/api/upload-stream", async (req, res) => {
   }
 });
 
+// Diagnostic: dump the bucket's current CORS policy + try to re-apply
+// our desired one and report the result. Lets us see whether the auto-
+// config is succeeding or being silently denied by token permissions.
+app.get("/api/debug/r2-cors", async (_req, res) => {
+  const out: any = { bucket: process.env.R2_BUCKET || "korrus-ads" };
+  try {
+    const { S3Client, GetBucketCorsCommand } = await import("@aws-sdk/client-s3");
+    const accountId = process.env.R2_ACCOUNT_ID;
+    const accessKey = process.env.R2_ACCESS_KEY_ID;
+    const secretKey = process.env.R2_SECRET_ACCESS_KEY;
+    if (!accountId || !accessKey || !secretKey) {
+      out.error = "Missing R2 env vars";
+      res.status(500).json(out);
+      return;
+    }
+    const s3 = new S3Client({
+      region: "auto",
+      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+    });
+    try {
+      const current = await s3.send(new GetBucketCorsCommand({ Bucket: out.bucket }));
+      out.currentCors = current.CORSRules;
+    } catch (err: any) {
+      out.getCorsError = err?.message || String(err);
+      out.getCorsName = err?.name;
+    }
+    try {
+      await ensureR2CorsConfigured();
+      out.putCorsResult = "see server log [R2] line";
+      // Read back to verify it took
+      const after = await s3.send(new GetBucketCorsCommand({ Bucket: out.bucket }));
+      out.corsAfterPut = after.CORSRules;
+    } catch (err: any) {
+      out.putCorsError = err?.message || String(err);
+    }
+    res.json(out);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 app.post("/api/r2-presign", express.json(), async (req, res) => {
   const { filename, mimeType } = req.body as { filename?: string; mimeType?: string };
   if (!filename || typeof filename !== "string") {
