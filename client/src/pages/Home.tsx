@@ -208,21 +208,88 @@ function suggestFromHistory(
   };
 }
 
-// Upload a file through our own server, which then streams it to R2
-// via lib-storage's multipart Upload. Browser only talks to our origin,
-// so there's NO CORS-on-R2 dependency — works regardless of who owns
-// the Cloudflare account or what permissions the R2 token has.
+// Direct browser → R2 upload via a server-issued presigned PUT URL.
+// Bytes travel once (browser → R2 edge network) instead of twice
+// (browser → Railway → R2). Quickest path; depends on the R2 bucket
+// having a CORS policy that allows our origin + PUT method.
 //
-// Uses XMLHttpRequest so we can report upload progress (browser → our
-// server) to a callback for the UI bar. The server pipes the stream
-// to R2 chunk-by-chunk with no buffering, so a 100MB+ video doesn't
-// spike Railway's memory.
+// Falls back automatically to /api/upload-stream (server-routed) if
+// the direct PUT is blocked by CORS — so an accidental CORS change
+// in Cloudflare won't take uploads down with it.
 async function directUploadToR2(
   file: File,
   authHeaders: HeadersInit,
   onProgress?: (info: { loaded: number; total: number; bytesPerSec: number }) => void
 ): Promise<{ fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number }> {
   const mimeType = file.type || "application/octet-stream";
+
+  // EWMA-smoothed throughput. Shared between the two paths so the UI
+  // sees one continuous bytes/sec number.
+  let lastTs = performance.now();
+  let lastLoaded = 0;
+  let smoothedBps = 0;
+  const reportProgress = (loaded: number, total: number) => {
+    if (!onProgress) return;
+    const now = performance.now();
+    const dt = (now - lastTs) / 1000;
+    const dBytes = loaded - lastLoaded;
+    if (dt > 0 && dBytes >= 0) {
+      const inst = dBytes / dt;
+      smoothedBps = smoothedBps === 0 ? inst : smoothedBps * 0.7 + inst * 0.3;
+      lastTs = now;
+      lastLoaded = loaded;
+    }
+    onProgress({ loaded, total, bytesPerSec: smoothedBps });
+  };
+
+  // Try the direct-to-R2 path first.
+  try {
+    const presignRes = await fetch("/api/r2-presign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ filename: file.name, mimeType }),
+    });
+    const presign = await presignRes.json();
+    if (!presignRes.ok || !presign.uploadUrl) {
+      throw new Error(presign.error || "Couldn't get upload URL");
+    }
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", presign.uploadUrl, true);
+      xhr.setRequestHeader("Content-Type", mimeType);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) reportProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          reportProgress(file.size, file.size);
+          resolve();
+        } else {
+          reject(new Error(`R2 upload failed (${xhr.status}): ${xhr.responseText?.slice(0, 200) || ""}`));
+        }
+      };
+      // CORS rejection comes through as a network error here, not a
+      // status — the browser blocks the response before we ever see it.
+      xhr.onerror = () => reject(new Error("R2 direct upload blocked or failed"));
+      xhr.onabort = () => reject(new Error("R2 upload aborted"));
+      xhr.send(file);
+    });
+    return {
+      fileUrl: presign.publicUrl as string,
+      fileKey: presign.key as string,
+      fileMimeType: mimeType,
+      fileSize: file.size,
+    };
+  } catch (directErr: any) {
+    console.warn("[upload] direct-to-R2 failed, falling back to server-routed:", directErr?.message);
+    // Reset progress accounting for the fallback attempt.
+    lastTs = performance.now();
+    lastLoaded = 0;
+    smoothedBps = 0;
+  }
+
+  // Fallback: route through Railway's /api/upload-stream. Slower but
+  // doesn't depend on R2 CORS being configured.
   return await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/upload-stream", true);
@@ -231,28 +298,14 @@ async function directUploadToR2(
     for (const [k, v] of Object.entries(authHeaders || {})) {
       xhr.setRequestHeader(k, v as string);
     }
-    // EWMA-smoothed throughput so the on-screen MB/sec doesn't bounce.
-    let lastTs = performance.now();
-    let lastLoaded = 0;
-    let smoothedBps = 0;
     xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable || !onProgress) return;
-      const now = performance.now();
-      const dt = (now - lastTs) / 1000;
-      const dBytes = e.loaded - lastLoaded;
-      if (dt > 0 && dBytes >= 0) {
-        const inst = dBytes / dt;
-        smoothedBps = smoothedBps === 0 ? inst : smoothedBps * 0.7 + inst * 0.3;
-        lastTs = now;
-        lastLoaded = e.loaded;
-      }
-      onProgress({ loaded: e.loaded, total: e.total, bytesPerSec: smoothedBps });
+      if (e.lengthComputable) reportProgress(e.loaded, e.total);
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const data = JSON.parse(xhr.responseText);
-          onProgress?.({ loaded: file.size, total: file.size, bytesPerSec: smoothedBps });
+          reportProgress(file.size, file.size);
           resolve({
             fileUrl: data.fileUrl,
             fileKey: data.fileKey,
