@@ -1172,36 +1172,53 @@ export default function Home() {
       }
     };
 
-    for (const row of newPending) {
-      (async () => {
-        setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading", progress: 0, bytesPerSec: 0 } : r));
-        try {
-          const token = localStorage.getItem("app-token");
-          const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
-          const uploadData = await directUploadToR2(row.file, authHeaders, ({ loaded, total, bytesPerSec }) => {
-            progressRef.set(row.tempId, {
-              progress: total > 0 ? loaded / total : 0,
-              bytesPerSec,
-            });
+    // Bound how many uploads run at once. 6 parallel 240MB uploads
+    // saturate the uplink and all hit TCP slow-start at the same time —
+    // observed empirically to time out / fail when dropping 6 at once
+    // while single-file uploads succeeded fine. A small concurrency
+    // window lets each upload ramp into its full bandwidth and finish
+    // cleanly. Total wall-clock is similar (often faster) and reliability
+    // goes way up.
+    const UPLOAD_CONCURRENCY = 2;
+    const queue = [...newPending];
+    let active = 0;
+
+    const uploadRow = async (row: PendingRow) => {
+      setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading", progress: 0, bytesPerSec: 0 } : r));
+      try {
+        const token = localStorage.getItem("app-token");
+        const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
+        const uploadData = await directUploadToR2(row.file, authHeaders, ({ loaded, total, bytesPerSec }) => {
+          progressRef.set(row.tempId, {
+            progress: total > 0 ? loaded / total : 0,
+            bytesPerSec,
           });
+        });
+        await createMut.mutateAsync({
+          ...row.fields,
+          fileUrl: uploadData.fileUrl,
+          conceptKey: (row as any)._conceptKey,
+        } as any);
+        setPendingRows((prev) => prev.filter((r) => r.tempId !== row.tempId));
+      } catch (err) {
+        console.error("Upload failed:", err);
+        setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "error" } : r));
+      } finally {
+        finish();
+      }
+    };
 
-          // Create queue entry — use pre-computed conceptKey from pending row
-          await createMut.mutateAsync({
-            ...row.fields,
-            fileUrl: uploadData.fileUrl,
-            conceptKey: (row as any)._conceptKey,
-          } as any);
-
-          // Remove from pending
-          setPendingRows((prev) => prev.filter((r) => r.tempId !== row.tempId));
-        } catch (err) {
-          console.error("Upload failed:", err);
-          setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "error" } : r));
-        } finally {
-          finish();
-        }
-      })();
-    }
+    const pump = () => {
+      while (active < UPLOAD_CONCURRENCY && queue.length > 0) {
+        const row = queue.shift()!;
+        active++;
+        uploadRow(row).finally(() => {
+          active--;
+          pump();
+        });
+      }
+    };
+    pump();
   }
 
   // Detect image dimensions via canvas
