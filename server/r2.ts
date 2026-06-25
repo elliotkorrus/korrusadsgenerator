@@ -30,32 +30,45 @@ function getS3(): S3Client {
 }
 
 /**
- * Make sure the R2 bucket allows direct browser PUTs from our dashboard
- * origins. Without CORS, presigned uploads from the browser fail with a
- * CORS error. We call this on server startup so the user never has to
- * touch the Cloudflare dashboard.
+ * Make sure the R2 bucket allows direct browser PUTs from any of our
+ * dashboard origins. Without CORS, presigned uploads from the browser
+ * fail with a CORS error. We call this on server startup so the user
+ * never has to touch the Cloudflare dashboard.
+ *
+ * Security note: we use AllowedOrigins=["*"] because presigned URLs
+ * have their own security boundary — the signature is required, the
+ * URL expires in 10 minutes, and uploads can't be retried with a
+ * different key. CORS isn't preventing abuse here, the signature is.
+ * Locking origin to a hardcoded list also breaks the moment the user
+ * adds a custom domain or the Railway URL changes.
  *
  * Idempotent: if the policy is already correct, the PUT is a no-op.
  */
-const REQUIRED_CORS_ORIGINS = [
-  "https://korrusadsgenerator-production.up.railway.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
-
 export async function ensureR2CorsConfigured(): Promise<void> {
   try {
-    // Always overwrite — small JSON, cheap call. Skip the existence check
-    // since we want a known-good policy regardless of prior state.
     await getS3().send(
       new PutBucketCorsCommand({
         Bucket: R2_BUCKET,
         CORSConfiguration: {
           CORSRules: [
             {
-              AllowedOrigins: REQUIRED_CORS_ORIGINS,
-              AllowedMethods: ["PUT", "GET", "HEAD"],
-              AllowedHeaders: ["*"],
+              AllowedOrigins: ["*"],
+              // Include every method we ever PUT/GET/HEAD plus the
+              // implicit OPTIONS that the browser uses for preflight.
+              AllowedMethods: ["GET", "HEAD", "PUT", "POST", "DELETE"],
+              // Be explicit about the headers we actually send so R2
+              // can't reject a preflight for a header name it doesn't
+              // recognize as part of the wildcard.
+              AllowedHeaders: [
+                "*",
+                "Content-Type",
+                "Content-Length",
+                "Content-Disposition",
+                "Authorization",
+                "x-amz-content-sha256",
+                "x-amz-date",
+              ],
+              ExposeHeaders: ["ETag"],
               MaxAgeSeconds: 3000,
             },
           ],
