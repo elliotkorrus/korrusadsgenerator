@@ -147,6 +147,67 @@ function getCurrentYearMonth(): string {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Tokenize a filename into a set of lowercase chunks for Jaccard-style
+// similarity matching. Splits on underscores, dashes, dots, spaces, and
+// camelCase boundaries. Strips file extension and dimension suffixes
+// (9x16, 1x1, etc.) since those vary between size variants of the same
+// concept and would otherwise drag down the match score.
+function filenameTokens(name: string): Set<string> {
+  const noExt = name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, "");
+  const normalized = noExt
+    .replace(/[\s\-\.]+/g, "_")
+    .replace(/([a-z])([A-Z])/g, "$1_$2");
+  const tokens = normalized.split("_").filter(Boolean).map((t) => t.toLowerCase());
+  return new Set(
+    tokens.filter((t) => {
+      if (/^\d+x\d+$/.test(t)) return false;       // 9x16, 1x1
+      if (/^v\d+$/i.test(t)) return false;          // V2, v3 — variation, not concept
+      if (/^(\d[a-z]|[a-z]\d)[a-z0-9]?$/i.test(t) && t.length <= 3) return false; // 1A, 2B
+      return true;
+    })
+  );
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersect = 0;
+  for (const tok of a) if (b.has(tok)) intersect++;
+  return intersect / (a.size + b.size - intersect);
+}
+
+// Find the historical row whose filename is most similar to `filename`.
+// Returns null when nothing scores above the confidence floor — guards
+// against confidently-wrong suggestions when the user uploads a brand
+// new concept that has no analog in history.
+function suggestFromHistory(
+  filename: string,
+  history: { filename: string | null; initiative?: string | null; variation?: string | null; angle?: string | null; source?: string | null; copySlug?: string | null; handle?: string | null; product?: string | null; creativeType?: string | null; createdAt?: string | Date | null }[]
+): { initiative?: string; variation?: string; angle?: string; source?: string; copySlug?: string; matchedFilename?: string; confidence: number } | null {
+  const CONF_FLOOR = 0.4;
+  const inputTokens = filenameTokens(filename);
+  if (inputTokens.size === 0) return null;
+  let bestRow: typeof history[number] | null = null;
+  let bestScore = 0;
+  for (const row of history) {
+    if (!row.filename || !row.initiative) continue; // need a tagged example
+    const score = jaccard(inputTokens, filenameTokens(row.filename));
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = row;
+    }
+  }
+  if (!bestRow || bestScore < CONF_FLOOR) return null;
+  return {
+    initiative: bestRow.initiative || undefined,
+    variation: bestRow.variation || undefined,
+    angle: bestRow.angle || undefined,
+    source: bestRow.source || undefined,
+    copySlug: bestRow.copySlug || undefined,
+    matchedFilename: bestRow.filename || undefined,
+    confidence: bestScore,
+  };
+}
+
 // Direct browser → R2 upload via a server-issued presigned PUT URL.
 // Skips Railway entirely for the byte payload, which roughly halves
 // upload time for 100MB+ videos vs going through the server. Used by
@@ -907,20 +968,31 @@ export default function Home() {
             if (dims) parsed.dimensions = dims;
           } catch { /* ignore */ }
         }
+        // If the filename parser couldn't pin down initiative or variation,
+        // ask history: find the closest previously-tagged ad by token
+        // overlap and inherit its values. Handles patterns like
+        // "NG-0029-X-1A-9x16" → "NG-0030-X-2A-9x16" where the campaign
+        // code shows up across many files but the variation suffix changes.
+        let suggestion: ReturnType<typeof suggestFromHistory> = null;
+        if (!parsed.initiative || !parsed.variation || !parsed.angle || !parsed.source || !parsed.copySlug) {
+          suggestion = suggestFromHistory(file.name, allItems as any);
+        }
+
         // Merge: ENABLED session defaults WIN over parser guesses (batch-friendly)
-        // Parser only fills in what defaults don't cover
+        // Parser only fills in what defaults don't cover. History suggestions
+        // sit below both — they're the last-ditch source.
         const fields: Record<string, string> = {
           brand: activeDefaults.brand || parsed.brand || "OIO",
           handle: activeDefaults.handle || parsed.handle || "korruscircadian",
-          initiative: activeDefaults.initiative || parsed.initiative || "",
-          variation: parsed.variation || activeDefaults.variation || "",
-          angle: activeDefaults.angle || parsed.angle || "",
-          source: activeDefaults.source || parsed.source || "",
+          initiative: activeDefaults.initiative || parsed.initiative || suggestion?.initiative || "",
+          variation: parsed.variation || activeDefaults.variation || suggestion?.variation || "",
+          angle: activeDefaults.angle || parsed.angle || suggestion?.angle || "",
+          source: activeDefaults.source || parsed.source || suggestion?.source || "",
           product: activeDefaults.product || parsed.product || "BULB",
           contentType: parsed.contentType || activeDefaults.contentType || "IMG",
           creativeType: activeDefaults.creativeType || parsed.creativeType || "",
           dimensions: parsed.dimensions || "",
-          copySlug: activeDefaults.copySlug || parsed.copySlug || "",
+          copySlug: activeDefaults.copySlug || parsed.copySlug || suggestion?.copySlug || "",
           filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
           date: activeDefaults.date || parsed.date || getCurrentYearMonth(),
         };
