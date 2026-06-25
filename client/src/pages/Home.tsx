@@ -943,70 +943,72 @@ export default function Home() {
     const groups = groupFilesByBaseName(files);
     const batchId = crypto.randomUUID();
 
-    const newPending: PendingRow[] = [];
+    // Prepare every file in parallel. Previously this was a nested
+    // sequential for-loop, which serialized detectVideoDims() across all
+    // dropped videos — up to ~4s per file of dead air before the first
+    // byte uploaded. With Promise.all the prep collapses to roughly the
+    // slowest single-file prep time.
+    const prepFile = async (file: File, groupKey: string): Promise<PendingRow> => {
+      const parsed = parseFilenameToFields(file.name);
+      // Content type from MIME
+      if (!parsed.contentType) {
+        if (file.type.startsWith("video/")) parsed.contentType = "VID";
+        else if (file.type.startsWith("image/")) parsed.contentType = "IMG";
+        else if (file.type === "image/gif") parsed.contentType = "GIF";
+      }
+      // Detect image dimensions
+      if (file.type.startsWith("image/") && !parsed.dimensions) {
+        try {
+          const dims = await detectImageDims(file);
+          if (dims) parsed.dimensions = dims;
+        } catch { /* ignore */ }
+      }
+      // Detect video dimensions (reads metadata only, no full decode)
+      if (file.type.startsWith("video/") && !parsed.dimensions) {
+        try {
+          const dims = await detectVideoDims(file);
+          if (dims) parsed.dimensions = dims;
+        } catch { /* ignore */ }
+      }
+      // History-based suggestions for empty fields. Runs locally on the
+      // already-loaded queue, no network call.
+      let suggestion: ReturnType<typeof suggestFromHistory> = null;
+      if (!parsed.initiative || !parsed.variation || !parsed.angle || !parsed.source || !parsed.copySlug) {
+        suggestion = suggestFromHistory(file.name, allItems as any);
+      }
+      const fields: Record<string, string> = {
+        brand: activeDefaults.brand || parsed.brand || "OIO",
+        handle: activeDefaults.handle || parsed.handle || "korruscircadian",
+        initiative: activeDefaults.initiative || parsed.initiative || suggestion?.initiative || "",
+        variation: parsed.variation || activeDefaults.variation || suggestion?.variation || "",
+        angle: activeDefaults.angle || parsed.angle || suggestion?.angle || "",
+        source: activeDefaults.source || parsed.source || suggestion?.source || "",
+        product: activeDefaults.product || parsed.product || "BULB",
+        contentType: parsed.contentType || activeDefaults.contentType || "IMG",
+        creativeType: activeDefaults.creativeType || parsed.creativeType || "",
+        dimensions: parsed.dimensions || "",
+        copySlug: activeDefaults.copySlug || parsed.copySlug || suggestion?.copySlug || "",
+        filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
+        date: activeDefaults.date || parsed.date || getCurrentYearMonth(),
+      };
+      return {
+        tempId: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        fields,
+        uploadState: "queued",
+        conceptGroupKey: groupKey,
+      };
+    };
+
+    const prepJobs: Promise<PendingRow>[] = [];
     for (const [baseName, groupFiles] of groups) {
       const groupKey = `${batchId}__${baseName}`;
       for (const file of groupFiles) {
-        const parsed = parseFilenameToFields(file.name);
-        // Content type from MIME
-        if (!parsed.contentType) {
-          if (file.type.startsWith("video/")) parsed.contentType = "VID";
-          else if (file.type.startsWith("image/")) parsed.contentType = "IMG";
-          else if (file.type === "image/gif") parsed.contentType = "GIF";
-        }
-        // Detect image dimensions
-        if (file.type.startsWith("image/") && !parsed.dimensions) {
-          try {
-            const dims = await detectImageDims(file);
-            if (dims) parsed.dimensions = dims;
-          } catch { /* ignore */ }
-        }
-        // Detect video dimensions (reads metadata only, no full decode)
-        if (file.type.startsWith("video/") && !parsed.dimensions) {
-          try {
-            const dims = await detectVideoDims(file);
-            if (dims) parsed.dimensions = dims;
-          } catch { /* ignore */ }
-        }
-        // If the filename parser couldn't pin down initiative or variation,
-        // ask history: find the closest previously-tagged ad by token
-        // overlap and inherit its values. Handles patterns like
-        // "NG-0029-X-1A-9x16" → "NG-0030-X-2A-9x16" where the campaign
-        // code shows up across many files but the variation suffix changes.
-        let suggestion: ReturnType<typeof suggestFromHistory> = null;
-        if (!parsed.initiative || !parsed.variation || !parsed.angle || !parsed.source || !parsed.copySlug) {
-          suggestion = suggestFromHistory(file.name, allItems as any);
-        }
-
-        // Merge: ENABLED session defaults WIN over parser guesses (batch-friendly)
-        // Parser only fills in what defaults don't cover. History suggestions
-        // sit below both — they're the last-ditch source.
-        const fields: Record<string, string> = {
-          brand: activeDefaults.brand || parsed.brand || "OIO",
-          handle: activeDefaults.handle || parsed.handle || "korruscircadian",
-          initiative: activeDefaults.initiative || parsed.initiative || suggestion?.initiative || "",
-          variation: parsed.variation || activeDefaults.variation || suggestion?.variation || "",
-          angle: activeDefaults.angle || parsed.angle || suggestion?.angle || "",
-          source: activeDefaults.source || parsed.source || suggestion?.source || "",
-          product: activeDefaults.product || parsed.product || "BULB",
-          contentType: parsed.contentType || activeDefaults.contentType || "IMG",
-          creativeType: activeDefaults.creativeType || parsed.creativeType || "",
-          dimensions: parsed.dimensions || "",
-          copySlug: activeDefaults.copySlug || parsed.copySlug || suggestion?.copySlug || "",
-          filename: parsed.filename || file.name.replace(/\.(mp4|mov|avi|jpg|jpeg|png|webp|gif|webm)$/i, ""),
-          date: activeDefaults.date || parsed.date || getCurrentYearMonth(),
-        };
-
-        newPending.push({
-          tempId: crypto.randomUUID(),
-          file,
-          previewUrl: URL.createObjectURL(file),
-          fields,
-          uploadState: "queued",
-          conceptGroupKey: groupKey,
-        });
+        prepJobs.push(prepFile(file, groupKey));
       }
     }
+    const newPending: PendingRow[] = await Promise.all(prepJobs);
 
     // Pre-compute conceptKeys for each pending row.
     // Concept grouping rule: files with same metadata but DIFFERENT dimensions
@@ -1121,8 +1123,11 @@ export default function Home() {
       video.muted = true;
       video.onloadedmetadata = checkRatio;
       video.onerror = () => finish(null);
-      // Safety timeout — don't block the upload flow if metadata never lands.
-      setTimeout(() => finish(null), 4000);
+      // Safety timeout. Most videos populate videoWidth/Height in <500ms
+      // once the moov atom is fetched; 1.5s is generous. Worst case we
+      // miss auto-detection and the user picks the dim manually — same
+      // outcome as today, just faster failure path.
+      setTimeout(() => finish(null), 1500);
       video.src = url;
     });
   }
