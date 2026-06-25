@@ -37,6 +37,9 @@ export interface PendingRow {
   fields: Record<string, string>;
   uploadState: "queued" | "uploading" | "done" | "error";
   conceptGroupKey: string;
+  // Upload progress (only set while uploadState === "uploading")
+  progress?: number;          // 0-1
+  bytesPerSec?: number;       // recent throughput, EWMA-smoothed
 }
 
 interface ConceptGroup {
@@ -506,18 +509,103 @@ export default function SpreadsheetInbox({
       onKeyDown={handleKeyDown}
       style={{ borderBottom: "1px solid var(--surface-3)" }}
     >
-      {/* Pending uploads indicator */}
-      {pendingRows.length > 0 && (
-        <div
-          className="flex items-center gap-2 px-4 py-2"
-          style={{ background: "rgba(0,153,198,0.06)", borderBottom: "1px solid rgba(0,153,198,0.15)" }}
-        >
-          <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "#0099C6" }} />
-          <span style={{ fontSize: "11px", color: "#60A7C8" }}>
-            Uploading {pendingRows.filter((r) => r.uploadState !== "done").length} file{pendingRows.filter((r) => r.uploadState !== "done").length !== 1 ? "s" : ""}...
-          </span>
-        </div>
-      )}
+      {/* Pending uploads indicator with per-file progress bars */}
+      {pendingRows.length > 0 && (() => {
+        const fmtMB = (b: number) => (b / (1024 * 1024)).toFixed(b > 100 * 1024 * 1024 ? 0 : 1);
+        const fmtRate = (bps: number) => {
+          if (!bps || bps <= 0) return "";
+          const mbps = (bps / (1024 * 1024));
+          return mbps >= 1 ? `${mbps.toFixed(1)} MB/s` : `${(bps / 1024).toFixed(0)} KB/s`;
+        };
+        const fmtEta = (secs: number) => {
+          if (!isFinite(secs) || secs <= 0) return "";
+          if (secs >= 60) return `${Math.round(secs / 60)}m left`;
+          return `${Math.round(secs)}s left`;
+        };
+        // Aggregate progress weighted by file size — the long pole dominates.
+        let aggLoaded = 0;
+        let aggTotal = 0;
+        let aggBps = 0;
+        for (const r of pendingRows) {
+          const total = r.file.size;
+          const p = r.progress ?? 0;
+          aggTotal += total;
+          aggLoaded += total * p;
+          aggBps += r.bytesPerSec ?? 0;
+        }
+        const aggPct = aggTotal > 0 ? (aggLoaded / aggTotal) * 100 : 0;
+        const aggEta = aggBps > 0 ? (aggTotal - aggLoaded) / aggBps : 0;
+        const activeCount = pendingRows.filter((r) => r.uploadState !== "done").length;
+        return (
+          <div
+            className="px-4 py-2.5 space-y-2"
+            style={{ background: "rgba(0,153,198,0.06)", borderBottom: "1px solid rgba(0,153,198,0.15)" }}
+          >
+            {/* Aggregate row */}
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" style={{ color: "#0099C6" }} />
+              <span className="font-semibold" style={{ fontSize: "11px", color: "#60A7C8" }}>
+                Uploading {activeCount} file{activeCount !== 1 ? "s" : ""}
+              </span>
+              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(0,153,198,0.12)" }}>
+                <div
+                  className="h-full transition-all duration-200"
+                  style={{ width: `${aggPct.toFixed(1)}%`, background: "linear-gradient(90deg, #0099C6, #60A7C8)" }}
+                />
+              </div>
+              <span className="font-mono whitespace-nowrap" style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                {fmtMB(aggLoaded)}/{fmtMB(aggTotal)} MB
+              </span>
+              {aggBps > 0 && (
+                <span className="font-mono whitespace-nowrap" style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                  · {fmtRate(aggBps)}
+                </span>
+              )}
+              {aggEta > 0 && (
+                <span className="font-mono whitespace-nowrap" style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                  · {fmtEta(aggEta)}
+                </span>
+              )}
+            </div>
+            {/* Per-file rows */}
+            <div className="space-y-1 pl-5.5">
+              {pendingRows.slice(0, 8).map((r) => {
+                const pct = (r.progress ?? 0) * 100;
+                const isError = r.uploadState === "error";
+                const isDone = r.uploadState === "done" || pct >= 100;
+                return (
+                  <div key={r.tempId} className="flex items-center gap-2">
+                    <span
+                      className="font-mono truncate"
+                      style={{ fontSize: "10px", color: "var(--text-secondary)", maxWidth: "240px", flexShrink: 0 }}
+                      title={r.file.name}
+                    >
+                      {r.file.name}
+                    </span>
+                    <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "rgba(0,153,198,0.10)" }}>
+                      <div
+                        className="h-full transition-all duration-200"
+                        style={{
+                          width: `${pct.toFixed(1)}%`,
+                          background: isError ? "#f87171" : isDone ? "#4ade80" : "#60A7C8",
+                        }}
+                      />
+                    </div>
+                    <span className="font-mono whitespace-nowrap" style={{ fontSize: "10px", color: "var(--text-muted)", minWidth: "36px", textAlign: "right" }}>
+                      {isError ? "err" : `${pct.toFixed(0)}%`}
+                    </span>
+                  </div>
+                );
+              })}
+              {pendingRows.length > 8 && (
+                <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                  …and {pendingRows.length - 8} more
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <table className="w-full text-xs border-collapse">
         <thead

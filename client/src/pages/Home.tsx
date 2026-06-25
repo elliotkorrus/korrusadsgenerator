@@ -214,9 +214,14 @@ function suggestFromHistory(
 // both the Inbox file drop and the Manage Assets (Replace + Add new
 // sizes) flows. CORS on the bucket is auto-configured at server boot
 // so this works without any Cloudflare-side setup.
+//
+// Uses XMLHttpRequest (not fetch) for the PUT step because fetch can't
+// report upload progress to a callback. The presign request stays on
+// fetch since the body is tiny.
 async function directUploadToR2(
   file: File,
-  authHeaders: HeadersInit
+  authHeaders: HeadersInit,
+  onProgress?: (info: { loaded: number; total: number; bytesPerSec: number }) => void
 ): Promise<{ fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number }> {
   const mimeType = file.type || "application/octet-stream";
   const presignRes = await fetch("/api/r2-presign", {
@@ -228,15 +233,43 @@ async function directUploadToR2(
   if (!presignRes.ok || !presign.uploadUrl) {
     throw new Error(presign.error || "Couldn't get upload URL");
   }
-  const putRes = await fetch(presign.uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": mimeType },
-    body: file,
+
+  // XHR PUT with progress reporting.
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", presign.uploadUrl, true);
+    xhr.setRequestHeader("Content-Type", mimeType);
+    // EWMA-smoothed throughput so the on-screen MB/sec doesn't bounce.
+    let lastTs = performance.now();
+    let lastLoaded = 0;
+    let smoothedBps = 0;
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable || !onProgress) return;
+      const now = performance.now();
+      const dt = (now - lastTs) / 1000;
+      const dBytes = e.loaded - lastLoaded;
+      if (dt > 0 && dBytes >= 0) {
+        const inst = dBytes / dt;
+        smoothedBps = smoothedBps === 0 ? inst : smoothedBps * 0.7 + inst * 0.3;
+        lastTs = now;
+        lastLoaded = e.loaded;
+      }
+      onProgress({ loaded: e.loaded, total: e.total, bytesPerSec: smoothedBps });
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        // Make sure the final 100% tick is reported.
+        onProgress?.({ loaded: file.size, total: file.size, bytesPerSec: smoothedBps });
+        resolve();
+      } else {
+        reject(new Error(`R2 upload failed (${xhr.status}): ${xhr.responseText?.slice(0, 200) || ""}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("R2 upload failed: network error"));
+    xhr.onabort = () => reject(new Error("R2 upload aborted"));
+    xhr.send(file);
   });
-  if (!putRes.ok) {
-    const errText = await putRes.text().catch(() => "");
-    throw new Error(`R2 upload failed (${putRes.status}): ${errText.slice(0, 200)}`);
-  }
+
   return {
     fileUrl: presign.publicUrl as string,
     fileKey: presign.key as string,
@@ -1051,13 +1084,54 @@ export default function Home() {
     // Upload each file in background, create DB row, then remove from pending.
     // Direct browser → R2 via presigned PUT — bytes skip Railway entirely so
     // 100MB+ videos upload roughly twice as fast as the previous multer path.
+    // Throttle progress writes so we don't re-render the table on every
+    // byte. XHR onprogress fires ~50ms, with 6 parallel uploads that's
+    // 120 setState calls/sec — janky. Latest progress per file goes into
+    // a ref; a 200ms interval flushes whatever's new into React state.
+    const progressRef = new Map<string, { progress: number; bytesPerSec: number }>();
+    const flushInterval = setInterval(() => {
+      if (progressRef.size === 0) return;
+      const snapshot = new Map(progressRef);
+      progressRef.clear();
+      setPendingRows((prev) =>
+        prev.map((r) => {
+          const upd = snapshot.get(r.tempId);
+          return upd ? { ...r, ...upd } : r;
+        })
+      );
+    }, 200);
+
+    let inflight = newPending.length;
+    const finish = () => {
+      inflight--;
+      if (inflight <= 0) {
+        clearInterval(flushInterval);
+        // Final flush so the last partial progress lands before the row clears.
+        if (progressRef.size > 0) {
+          const snapshot = new Map(progressRef);
+          progressRef.clear();
+          setPendingRows((prev) =>
+            prev.map((r) => {
+              const upd = snapshot.get(r.tempId);
+              return upd ? { ...r, ...upd } : r;
+            })
+          );
+        }
+      }
+    };
+
     for (const row of newPending) {
       (async () => {
-        setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading" } : r));
+        setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading", progress: 0, bytesPerSec: 0 } : r));
         try {
           const token = localStorage.getItem("app-token");
           const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
-          const uploadData = await directUploadToR2(row.file, authHeaders);
+          const uploadData = await directUploadToR2(row.file, authHeaders, ({ loaded, total, bytesPerSec }) => {
+            progressRef.set(row.tempId, {
+              progress: total > 0 ? loaded / total : 0,
+              bytesPerSec,
+            });
+          });
 
           // Create queue entry — use pre-computed conceptKey from pending row
           await createMut.mutateAsync({
@@ -1071,6 +1145,8 @@ export default function Home() {
         } catch (err) {
           console.error("Upload failed:", err);
           setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "error" } : r));
+        } finally {
+          finish();
         }
       })();
     }
