@@ -147,6 +147,43 @@ function getCurrentYearMonth(): string {
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Direct browser → R2 upload via a server-issued presigned PUT URL.
+// Skips Railway entirely for the byte payload, which roughly halves
+// upload time for 100MB+ videos vs going through the server. Used by
+// both the Inbox file drop and the Manage Assets (Replace + Add new
+// sizes) flows. CORS on the bucket is auto-configured at server boot
+// so this works without any Cloudflare-side setup.
+async function directUploadToR2(
+  file: File,
+  authHeaders: HeadersInit
+): Promise<{ fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number }> {
+  const mimeType = file.type || "application/octet-stream";
+  const presignRes = await fetch("/api/r2-presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ filename: file.name, mimeType }),
+  });
+  const presign = await presignRes.json();
+  if (!presignRes.ok || !presign.uploadUrl) {
+    throw new Error(presign.error || "Couldn't get upload URL");
+  }
+  const putRes = await fetch(presign.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": mimeType },
+    body: file,
+  });
+  if (!putRes.ok) {
+    const errText = await putRes.text().catch(() => "");
+    throw new Error(`R2 upload failed (${putRes.status}): ${errText.slice(0, 200)}`);
+  }
+  return {
+    fileUrl: presign.publicUrl as string,
+    fileKey: presign.key as string,
+    fileMimeType: mimeType,
+    fileSize: file.size,
+  };
+}
+
 // Dimension badge style
 function dimBadgeClass(dim: string, _status?: string): string {
   const base = "rounded-sm px-1.5 py-0.5 text-[9px] font-mono font-bold border inline-flex items-center gap-1";
@@ -937,22 +974,16 @@ export default function Home() {
 
     setPendingRows((prev) => [...prev, ...newPending]);
 
-    // Upload each file in background, create DB row, then remove from pending
+    // Upload each file in background, create DB row, then remove from pending.
+    // Direct browser → R2 via presigned PUT — bytes skip Railway entirely so
+    // 100MB+ videos upload roughly twice as fast as the previous multer path.
     for (const row of newPending) {
       (async () => {
         setPendingRows((prev) => prev.map((r) => r.tempId === row.tempId ? { ...r, uploadState: "uploading" } : r));
         try {
-          // Upload file to R2 (images and videos)
-          const formData = new FormData();
-          formData.append("file", row.file);
           const token = localStorage.getItem("app-token");
-          const uploadRes = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-            headers: token ? { "x-app-token": token } : {},
-          });
-          const uploadData = await uploadRes.json();
-          if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
+          const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
+          const uploadData = await directUploadToR2(row.file, authHeaders);
 
           // Create queue entry — use pre-computed conceptKey from pending row
           await createMut.mutateAsync({
@@ -1763,26 +1794,11 @@ export default function Home() {
     const token = localStorage.getItem("app-token");
     const authHeaders: HeadersInit = token ? { "x-app-token": token } : {};
     try {
-      // Streaming upload through Railway → R2. The server pipes the request
-      // body straight to R2 via lib-storage's multipart Upload (no buffering,
-      // no memory spike). The browser sends the file as the raw POST body —
-      // no FormData, so no multer in the path either.
-      // We don't use presigned direct-to-R2 here because that needs CORS on
-      // the bucket, which is fragile to configure from the dashboard.
-      const uploadOne = async (file: File) => {
-        const r = await fetch("/api/upload-stream", {
-          method: "POST",
-          headers: {
-            ...authHeaders,
-            "Content-Type": file.type || "application/octet-stream",
-            "X-Filename": file.name,
-          },
-          body: file,
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Upload failed");
-        return d as { fileUrl: string; fileKey: string; fileMimeType: string; fileSize: number };
-      };
+      // Direct browser → R2 via presigned PUT. Bytes traverse the network
+      // ONCE (vs browser→Railway→R2 in the streaming path), which roughly
+      // halves upload time for 100MB+ videos. CORS is auto-configured on
+      // the bucket at server startup so this just works.
+      const uploadOne = (file: File) => directUploadToR2(file, authHeaders);
 
       const replaceUploads = await Promise.all(
         filesToReplace.map(async ({ rowId, file }) => ({ rowId, ...(await uploadOne(file)) }))
