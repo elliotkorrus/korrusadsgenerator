@@ -483,9 +483,12 @@ async function uploadVideoChunked(
 /** Poll Meta until video processing is complete */
 async function waitForVideoReady(videoId: string, accessToken: string): Promise<void> {
   // Poll every 2s for the first 30s (most videos finish here), then back off
-  // to 5s. Cap total wait at 10 min, same as before.
+  // to 5s. Wait up to 30 min — Meta routinely takes 10-20 min on long or
+  // high-res videos and the previous 10-min cap was hitting that ceiling
+  // for legitimate uploads.
   const startedAt = Date.now();
-  const MAX_MS = 10 * 60 * 1000;
+  const MAX_MS = 30 * 60 * 1000;
+  let lastStatus: any = null;
   while (Date.now() - startedAt < MAX_MS) {
     const interval = Date.now() - startedAt < 30_000 ? 2000 : 5000;
     await new Promise((r) => setTimeout(r, interval));
@@ -493,12 +496,18 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
       `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
     );
     const statusData = await statusRes.json();
+    lastStatus = statusData.status;
     if (statusData.status?.video_status === "ready") return;
     if (statusData.status?.video_status === "error") {
       throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
     }
   }
-  throw new Error("Video processing timed out after 10 minutes");
+  // Surface what state Meta was in at timeout — tells us next time whether
+  // they were still processing or stuck in an unexpected state, so the
+  // error is actionable instead of a black box.
+  throw new Error(
+    `Video processing timed out after 30 min. Last Meta status: ${JSON.stringify(lastStatus) || "no response"}`
+  );
 }
 
 // ── Step 2: Create Ad Creative ───────────────────────────────────────
