@@ -957,14 +957,14 @@ export async function uploadAdsBatch(adIds: number[]): Promise<{
     groups.get(key)!.push(ad);
   }
 
-  // Upload concept groups with bounded concurrency. Previously this
-  // loop was strictly serial — for users with 20+ ready ads, that
-  // meant waiting for every concept's full Meta video-processing time
-  // before the next one even started (multi-hour batches). Meta's API
-  // tolerates 3-5 concurrent uploads from a single account fine, and
-  // each concept's own per-asset uploads are still serial inside
-  // uploadConceptGroup, so we don't over-saturate.
-  const CONCEPT_CONCURRENCY = 3;
+  // Upload concept groups with bounded concurrency. Previously parallel
+  // (3 concurrent) but that caused Railway to OOM-crash on batches of
+  // 100MB+ videos — each worker holds the full video buffer while
+  // uploading to Meta, so 3 workers × 200MB = 600MB+ resident which
+  // exceeded the container's memory ceiling. Dropping to 1 trades
+  // wall-clock for reliability: uploads actually complete instead of
+  // restart-looping. User constraint: can't compress source videos.
+  const CONCEPT_CONCURRENCY = 1;
   const groupList = [...groups.values()];
   const results: UploadResult[] = [];
   let nextIdx = 0;
