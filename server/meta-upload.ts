@@ -957,12 +957,34 @@ export async function uploadAdsBatch(adIds: number[]): Promise<{
     groups.get(key)!.push(ad);
   }
 
-  // Upload each concept group
+  // Upload concept groups with bounded concurrency. Previously this
+  // loop was strictly serial — for users with 20+ ready ads, that
+  // meant waiting for every concept's full Meta video-processing time
+  // before the next one even started (multi-hour batches). Meta's API
+  // tolerates 3-5 concurrent uploads from a single account fine, and
+  // each concept's own per-asset uploads are still serial inside
+  // uploadConceptGroup, so we don't over-saturate.
+  const CONCEPT_CONCURRENCY = 3;
+  const groupList = [...groups.values()];
   const results: UploadResult[] = [];
-  for (const [, rows] of groups) {
-    const result = await uploadConceptGroup(rows, meta);
-    results.push(result);
-  }
+  let nextIdx = 0;
+  const workers = Array.from({ length: Math.min(CONCEPT_CONCURRENCY, groupList.length) }, async () => {
+    while (true) {
+      const idx = nextIdx++;
+      if (idx >= groupList.length) return;
+      const rows = groupList[idx];
+      try {
+        const result = await uploadConceptGroup(rows, meta);
+        results.push(result);
+      } catch (err: any) {
+        // uploadConceptGroup already records its own failures into the
+        // DB row. Catching here so one bad concept can't kill sibling
+        // workers — they should keep grinding through the queue.
+        console.error(`[uploadAdsBatch] concept failed:`, err?.message);
+      }
+    }
+  });
+  await Promise.all(workers);
 
   return {
     results,
