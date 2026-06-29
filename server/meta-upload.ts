@@ -507,11 +507,20 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
       if (statusData.error) {
         const code = statusData.error.code;
         const subcode = statusData.error.error_subcode;
-        // 190 = token expired/invalid, 100 = permission. Bail fast — no
-        // amount of retrying a bad token will make it valid.
+        // Bail fast on errors that won't resolve by retrying:
+        // - 190/100/102: token expired/invalid/permission. Retrying a
+        //   bad token never makes it valid.
+        // - 4/17/32: app/user rate limit. Continuing to poll just
+        //   compounds the throttle — back off so the limit window
+        //   can expire instead of being held open by our retries.
         if (code === 190 || code === 100 || code === 102) {
           throw new Error(
             `Meta auth error during video poll (code=${code}, subcode=${subcode}): ${statusData.error.message}`
+          );
+        }
+        if (code === 4 || code === 17 || code === 32) {
+          throw new Error(
+            `Meta rate limit hit during video poll (code=${code}): ${statusData.error.message}. Wait ~1 hour before retrying.`
           );
         }
         lastError = statusData.error;
@@ -537,7 +546,11 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
     } catch (err: any) {
       // Network blips: log and keep polling. Real Meta errors above
       // throw and propagate.
-      if (err.message?.startsWith("Meta auth error") || err.message?.startsWith("Video processing failed")) {
+      if (
+        err.message?.startsWith("Meta auth error") ||
+        err.message?.startsWith("Meta rate limit") ||
+        err.message?.startsWith("Video processing failed")
+      ) {
         throw err;
       }
       console.warn(`[meta-video-poll] videoId=${videoId} poll #${pollCount} network blip:`, err?.message);

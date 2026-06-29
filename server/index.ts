@@ -202,6 +202,29 @@ app.get("/admin/queue-stats", async (_req, res) => {
   }
 });
 
+// Reset-only recovery: clears stuck "uploading"/"error" rows to ready
+// WITHOUT triggering uploadAllReady. Use this when Meta is rate-limiting
+// us — re-triggering would compound the rate limit. After waiting for
+// the limit to expire, the user can manually click Send to Meta.
+app.post("/admin/reset-only", async (_req, res) => {
+  try {
+    const stuck = await db
+      .update(schema.uploadQueue)
+      .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.status, "uploading"))
+      .returning({ id: schema.uploadQueue.id });
+    const errs = await db
+      .update(schema.uploadQueue)
+      .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.status, "error"))
+      .returning({ id: schema.uploadQueue.id });
+    uploadState.clear();
+    res.json({ success: true, resetUploading: stuck.length, resetError: errs.length });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || String(err) });
+  }
+});
+
 // One-shot recovery: unstick the upload queue when something wedges
 // (Meta API hung mid-send leaving rows in "uploading" forever, or the
 // in-memory upload lock didn't release). Mounted at /admin/* outside
