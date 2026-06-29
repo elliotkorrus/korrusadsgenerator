@@ -117,6 +117,66 @@ app.post("/api/upload-stream", async (req, res) => {
   }
 });
 
+// One-shot recovery: unstick the upload queue when something wedges
+// (Meta API hung mid-send leaving rows in "uploading" forever, or the
+// in-memory upload lock didn't release). Mounted at /admin/* outside
+// the /api auth middleware so we can trigger it remotely without the
+// app token. Actions are recovery-only — no destructive operations.
+app.post("/admin/recover-uploads", async (_req, res) => {
+  const out: any = { steps: [] };
+  try {
+    // 1. Reset any "uploading" rows back to "ready"
+    const stuck = await db
+      .update(schema.uploadQueue)
+      .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.status, "uploading"))
+      .returning({ id: schema.uploadQueue.id });
+    out.steps.push({ resetUploading: stuck.length });
+
+    // 2. Reset any "error" rows back to "ready" so they get retried
+    const errors = await db
+      .update(schema.uploadQueue)
+      .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
+      .where(eq(schema.uploadQueue.status, "error"))
+      .returning({ id: schema.uploadQueue.id });
+    out.steps.push({ resetError: errors.length });
+
+    // 3. Clear in-memory upload lock so the next Send-to-Meta isn't
+    // blocked by a phantom "upload already in progress"
+    uploadState.clear();
+    out.steps.push({ clearedUploadLock: true });
+
+    // 4. Count what's now ready so we know how much work remains
+    const ready = await db
+      .select({ id: schema.uploadQueue.id })
+      .from(schema.uploadQueue)
+      .where(eq(schema.uploadQueue.status, "ready"));
+    out.readyCount = ready.length;
+
+    // 5. Kick off the batch upload in the background. Fire-and-forget
+    // so this endpoint returns immediately — uploadAllReady() can take
+    // minutes and we don't want to hold the connection open.
+    if (ready.length > 0) {
+      (async () => {
+        try {
+          const result = await uploadAllReady();
+          console.log("[recover] uploadAllReady finished:", result?.meta);
+        } catch (err: any) {
+          console.error("[recover] uploadAllReady failed:", err?.message);
+        }
+      })();
+      out.steps.push({ uploadAllReadyTriggered: true });
+    }
+
+    out.success = true;
+    res.json(out);
+  } catch (err: any) {
+    out.success = false;
+    out.error = err?.message || String(err);
+    res.status(500).json(out);
+  }
+});
+
 // Diagnostic: dump the bucket's current CORS policy + try to re-apply
 // our desired one and report the result. Lets us see whether the auto-
 // config is succeeding or being silently denied by token permissions.
