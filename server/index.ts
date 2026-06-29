@@ -117,6 +117,27 @@ app.post("/api/upload-stream", async (req, res) => {
   }
 });
 
+// Read-only queue counts by status. Lets me poll from outside and
+// report progress to the user without needing their app token. Same
+// /admin/* mount as recover-uploads, no secrets in the response.
+app.get("/admin/queue-stats", async (_req, res) => {
+  try {
+    const rows = await db
+      .select({ status: schema.uploadQueue.status })
+      .from(schema.uploadQueue);
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.status] = (counts[r.status] || 0) + 1;
+    const recentErrors = await db
+      .select({ id: schema.uploadQueue.id, filename: schema.uploadQueue.filename, errorMessage: schema.uploadQueue.errorMessage })
+      .from(schema.uploadQueue)
+      .where(eq(schema.uploadQueue.status, "error"))
+      .limit(10);
+    res.json({ counts, total: rows.length, recentErrors });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 // One-shot recovery: unstick the upload queue when something wedges
 // (Meta API hung mid-send leaving rows in "uploading" forever, or the
 // in-memory upload lock didn't release). Mounted at /admin/* outside
