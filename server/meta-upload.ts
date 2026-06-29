@@ -489,24 +489,62 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
   const startedAt = Date.now();
   const MAX_MS = 30 * 60 * 1000;
   let lastStatus: any = null;
+  let lastError: any = null;
+  let pollCount = 0;
+  console.log(`[meta-video-poll] starting videoId=${videoId}`);
   while (Date.now() - startedAt < MAX_MS) {
     const interval = Date.now() - startedAt < 30_000 ? 2000 : 5000;
     await new Promise((r) => setTimeout(r, interval));
-    const statusRes = await fetch(
-      `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
-    );
-    const statusData = await statusRes.json();
-    lastStatus = statusData.status;
-    if (statusData.status?.video_status === "ready") return;
-    if (statusData.status?.video_status === "error") {
-      throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
+    pollCount++;
+    try {
+      const statusRes = await fetch(
+        `${META_BASE}/${videoId}?fields=status&access_token=${accessToken}`
+      );
+      const statusData = await statusRes.json();
+      // Surface auth/permission errors immediately — silently looping on a
+      // 401 token-expired response is exactly what was hiding the real
+      // problem in the past hour.
+      if (statusData.error) {
+        const code = statusData.error.code;
+        const subcode = statusData.error.error_subcode;
+        // 190 = token expired/invalid, 100 = permission. Bail fast — no
+        // amount of retrying a bad token will make it valid.
+        if (code === 190 || code === 100 || code === 102) {
+          throw new Error(
+            `Meta auth error during video poll (code=${code}, subcode=${subcode}): ${statusData.error.message}`
+          );
+        }
+        lastError = statusData.error;
+        console.warn(`[meta-video-poll] videoId=${videoId} poll #${pollCount} returned error:`, statusData.error);
+        continue;
+      }
+      lastStatus = statusData.status;
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      // Log every 5th poll once we're past the fast initial window, so
+      // Railway logs aren't drowned but we can still see steady progress.
+      if (pollCount <= 3 || pollCount % 5 === 0) {
+        console.log(
+          `[meta-video-poll] videoId=${videoId} poll #${pollCount} (${elapsedSec}s elapsed): ${JSON.stringify(lastStatus)}`
+        );
+      }
+      if (statusData.status?.video_status === "ready") {
+        console.log(`[meta-video-poll] videoId=${videoId} READY after ${elapsedSec}s, ${pollCount} polls`);
+        return;
+      }
+      if (statusData.status?.video_status === "error") {
+        throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
+      }
+    } catch (err: any) {
+      // Network blips: log and keep polling. Real Meta errors above
+      // throw and propagate.
+      if (err.message?.startsWith("Meta auth error") || err.message?.startsWith("Video processing failed")) {
+        throw err;
+      }
+      console.warn(`[meta-video-poll] videoId=${videoId} poll #${pollCount} network blip:`, err?.message);
     }
   }
-  // Surface what state Meta was in at timeout — tells us next time whether
-  // they were still processing or stuck in an unexpected state, so the
-  // error is actionable instead of a black box.
   throw new Error(
-    `Video processing timed out after 30 min. Last Meta status: ${JSON.stringify(lastStatus) || "no response"}`
+    `Video processing timed out after 30 min. Polls=${pollCount}, last status=${JSON.stringify(lastStatus) || "none"}, last error=${JSON.stringify(lastError) || "none"}`
   );
 }
 

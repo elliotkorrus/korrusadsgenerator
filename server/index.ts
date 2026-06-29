@@ -7,7 +7,7 @@ import multer from "multer";
 import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, inArray, desc } from "drizzle-orm";
 import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
 import { uploadToR2, getR2PresignedPutUrl, ensureR2CorsConfigured, streamUploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
@@ -114,6 +114,70 @@ app.post("/api/upload-stream", async (req, res) => {
     console.error(`[upload-stream] FAILED filename=${filename} elapsed=${elapsed}s error="${err?.message}" name="${err?.name}" code="${err?.Code || err?.code}"`);
     logger.error("Streaming R2 upload failed", { error: err.message });
     res.status(500).json({ error: `Upload failed: ${err.message}` });
+  }
+});
+
+// Detailed inspect: show every row currently in uploading/error with
+// timestamps + Meta IDs. Lets me see how long a row has been stuck
+// in "uploading" — if updatedAt is hours old, the polling loop has
+// hung; if it's recent, things are actually progressing.
+app.get("/admin/inspect-queue", async (_req, res) => {
+  try {
+    const rows = await db
+      .select({
+        id: schema.uploadQueue.id,
+        filename: schema.uploadQueue.filename,
+        status: schema.uploadQueue.status,
+        dimensions: schema.uploadQueue.dimensions,
+        updatedAt: schema.uploadQueue.updatedAt,
+        createdAt: schema.uploadQueue.createdAt,
+        metaAdId: schema.uploadQueue.metaAdId,
+        metaCreativeId: schema.uploadQueue.metaCreativeId,
+        errorMessage: schema.uploadQueue.errorMessage,
+        fileSize: schema.uploadQueue.fileSize,
+      })
+      .from(schema.uploadQueue)
+      .where(inArray(schema.uploadQueue.status, ["uploading", "error"]))
+      .orderBy(desc(schema.uploadQueue.updatedAt))
+      .limit(50);
+    const now = Date.now();
+    const decorated = rows.map((r) => {
+      const updatedMs = r.updatedAt ? new Date(r.updatedAt as any).getTime() : 0;
+      const ageSec = updatedMs ? Math.round((now - updatedMs) / 1000) : null;
+      return {
+        ...r,
+        sinceUpdateSec: ageSec,
+        sinceUpdateHuman: ageSec != null ? `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago` : "n/a",
+      };
+    });
+    res.json({ rows: decorated });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
+// Meta API health check: hit /me with the stored token to verify it
+// still works. If token is expired or revoked, every video poll has
+// been silently 401-ing inside the loop. We need to know this fast.
+app.get("/admin/meta-ping", async (_req, res) => {
+  try {
+    const settingsRows = await db.select().from(schema.metaSettings);
+    const settings = settingsRows[0];
+    if (!settings?.accessToken) {
+      res.status(500).json({ ok: false, error: "No access token in DB" });
+      return;
+    }
+    const url = `https://graph.facebook.com/v21.0/me?access_token=${encodeURIComponent(settings.accessToken)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    res.json({
+      ok: r.ok && !data.error,
+      status: r.status,
+      meta: data,
+      tokenExpiresAt: settings.tokenExpiresAt,
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
 
