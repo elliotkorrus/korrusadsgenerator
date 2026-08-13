@@ -416,6 +416,29 @@ export default function DetailDrawer({
             </div>
           </div>
 
+          {/* Error message — full text, so rate-limit guidance like
+              "Wait ~60 min before retrying" is actually readable */}
+          {item.errorMessage && (
+            <div style={{ marginBottom: "16px" }}>
+              <div style={labelStyle}>Error</div>
+              <div
+                style={{
+                  fontSize: "12px",
+                  lineHeight: "17px",
+                  color: "#f85149",
+                  background: "rgba(218,54,51,0.08)",
+                  border: "1px solid rgba(218,54,51,0.25)",
+                  borderRadius: "3px",
+                  padding: "8px 10px",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {item.errorMessage}
+              </div>
+            </div>
+          )}
+
           <div style={{ borderTop: "1px solid var(--surface-2)", marginBottom: "16px" }} />
 
           {/* Form fields */}

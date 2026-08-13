@@ -7,11 +7,11 @@ import multer from "multer";
 import AdmZip from "adm-zip";
 import { appRouter } from "./routers.js";
 import { db, schema } from "./db.js";
-import { eq, sql, inArray, desc } from "drizzle-orm";
-import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
+import { and, eq, like, sql, inArray, desc } from "drizzle-orm";
+import { uploadAdsBatch, uploadAllReady, uploadProgressEmitter, getAllProgress, clearAllProgress, updateDestinationUrls, updateCreativeFields, setAdStatusInMeta, replaceAdAssets, addAdAssets, duplicateAdsWithNewUrl, reuploadAdsToAccount } from "./meta-upload.js";
 import { uploadToR2, getR2PresignedPutUrl, ensureR2CorsConfigured, streamUploadToR2 } from "./r2.js";
 import { logger } from "./logger.js";
-import { uploadState } from "./upload-state.js";
+import { uploadState, rateLimit } from "./upload-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = process.env.UPLOADS_PATH ?? path.join(__dirname, "..", "uploads");
@@ -43,6 +43,11 @@ function authMiddleware(req: express.Request, res: express.Response, next: expre
   res.status(401).json({ error: "Unauthorized" });
 }
 app.use("/api", authMiddleware);
+// /admin/* mutates queue state and was previously reachable with zero
+// credentials (and CSRF-able: a body-less POST is a CORS simple
+// request browsers send cross-origin). Same token gate as /api —
+// remote triggering still works by sending x-app-token (or ?token=).
+app.use("/admin", authMiddleware);
 
 // ── Health check (no auth) ──────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
@@ -181,9 +186,9 @@ app.get("/admin/meta-ping", async (_req, res) => {
   }
 });
 
-// Read-only queue counts by status. Lets me poll from outside and
-// report progress to the user without needing their app token. Same
-// /admin/* mount as recover-uploads, no secrets in the response.
+// Read-only queue counts by status, plus the Meta rate-limit circuit
+// state. Remote polling works with the x-app-token header (or ?token=)
+// — /admin/* now shares the /api auth gate.
 app.get("/admin/queue-stats", async (_req, res) => {
   try {
     const rows = await db
@@ -196,30 +201,64 @@ app.get("/admin/queue-stats", async (_req, res) => {
       .from(schema.uploadQueue)
       .where(eq(schema.uploadQueue.status, "error"))
       .limit(10);
-    res.json({ counts, total: rows.length, recentErrors });
+    res.json({ counts, total: rows.length, recentErrors, rateLimit: rateLimit.info() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
-// Reset-only recovery: clears stuck "uploading"/"error" rows to ready
-// WITHOUT triggering uploadAllReady. Use this when Meta is rate-limiting
-// us — re-triggering would compound the rate limit. After waiting for
-// the limit to expire, the user can manually click Send to Meta.
-app.post("/admin/reset-only", async (_req, res) => {
+// Reset-only recovery: clears stuck "uploading" rows and rate-limited
+// "error" rows back to ready WITHOUT triggering uploadAllReady. Use
+// this when Meta is rate-limiting us — re-triggering would compound
+// the rate limit. After the limit expires, the user can manually click
+// Send to Meta. Pass ?all=true to also reset non-rate-limit "error"
+// rows (wipes their diagnostics — they'll re-fail unless fixed first).
+app.post("/admin/reset-only", async (req, res) => {
   try {
+    // Refuse while a batch is genuinely live: resetting rows mid-flight
+    // just gets overwritten by the worker's own status writes, and
+    // clearing the lock would let a second concurrent batch
+    // double-upload the same rows. Rate-limited batches now abort on
+    // their own, so "still running" resolves quickly.
+    if (uploadState.isActive() && !uploadState.isStale()) {
+      const elapsedSec = Math.round(uploadState.elapsedMs() / 1000);
+      res.status(409).json({
+        success: false,
+        error: `An upload batch is still running (${elapsedSec}s elapsed). Wait for it to stop — rate-limited batches abort on their own — or retry after it goes stale.`,
+      });
+      return;
+    }
+    const all = req.query.all === "true";
     const stuck = await db
       .update(schema.uploadQueue)
       .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
       .where(eq(schema.uploadQueue.status, "uploading"))
       .returning({ id: schema.uploadQueue.id });
+    // Default scope: only rate-limited failures (identified by the
+    // stable "Meta rate limit" message prefix). Validation/auth errors
+    // keep their diagnostics so the operator can tell which rows need
+    // fixing before another send.
+    const errWhere = all
+      ? eq(schema.uploadQueue.status, "error")
+      : and(
+          eq(schema.uploadQueue.status, "error"),
+          like(schema.uploadQueue.errorMessage, "Meta rate limit%")
+        );
     const errs = await db
       .update(schema.uploadQueue)
       .set({ status: "ready", errorMessage: null, updatedAt: sql`now()` })
-      .where(eq(schema.uploadQueue.status, "error"))
+      .where(errWhere)
       .returning({ id: schema.uploadQueue.id });
     uploadState.clear();
-    res.json({ success: true, resetUploading: stuck.length, resetError: errs.length });
+    const clearedProgress = clearAllProgress();
+    res.json({
+      success: true,
+      resetUploading: stuck.length,
+      resetError: errs.length,
+      clearedProgress,
+      errorScope: all ? "all" : "rate-limit-only",
+      rateLimit: rateLimit.info(),
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || String(err) });
   }
@@ -227,12 +266,21 @@ app.post("/admin/reset-only", async (_req, res) => {
 
 // One-shot recovery: unstick the upload queue when something wedges
 // (Meta API hung mid-send leaving rows in "uploading" forever, or the
-// in-memory upload lock didn't release). Mounted at /admin/* outside
-// the /api auth middleware so we can trigger it remotely without the
-// app token. Actions are recovery-only — no destructive operations.
+// in-memory upload lock didn't release). Requires the same x-app-token
+// as /api. Actions are recovery-only — no destructive operations.
 app.post("/admin/recover-uploads", async (_req, res) => {
   const out: any = { steps: [] };
   try {
+    // Same live-batch guard as reset-only: recovering mid-batch gets
+    // overwritten by the worker and un-mutexes a concurrent batch.
+    if (uploadState.isActive() && !uploadState.isStale()) {
+      const elapsedSec = Math.round(uploadState.elapsedMs() / 1000);
+      res.status(409).json({
+        success: false,
+        error: `An upload batch is still running (${elapsedSec}s elapsed). Wait for it to stop or retry after it goes stale.`,
+      });
+      return;
+    }
     // 1. Reset any "uploading" rows back to "ready"
     const stuck = await db
       .update(schema.uploadQueue)
@@ -250,9 +298,12 @@ app.post("/admin/recover-uploads", async (_req, res) => {
     out.steps.push({ resetError: errors.length });
 
     // 3. Clear in-memory upload lock so the next Send-to-Meta isn't
-    // blocked by a phantom "upload already in progress"
+    // blocked by a phantom "upload already in progress", and drop
+    // stale progress entries so the SSE stream stops replaying
+    // phantom in-flight uploads.
     uploadState.clear();
-    out.steps.push({ clearedUploadLock: true });
+    const clearedProgress = clearAllProgress();
+    out.steps.push({ clearedUploadLock: true, clearedProgress });
 
     // 4. Count what's now ready so we know how much work remains
     const ready = await db
@@ -261,18 +312,26 @@ app.post("/admin/recover-uploads", async (_req, res) => {
       .where(eq(schema.uploadQueue.status, "ready"));
     out.readyCount = ready.length;
 
-    // 5. Kick off the batch upload in the background. Fire-and-forget
-    // so this endpoint returns immediately — uploadAllReady() can take
-    // minutes and we don't want to hold the connection open.
-    if (ready.length > 0) {
-      (async () => {
+    // 5. Kick off the batch upload in the background (holding the
+    // upload lock, so a concurrent Send to Meta can't double-run).
+    // Fire-and-forget so this endpoint returns immediately —
+    // uploadAllReady() can take minutes. Skipped entirely while the
+    // Meta rate-limit circuit is tripped: re-triggering during the
+    // window is exactly the compounding this recovery path is for.
+    const limited = rateLimit.info();
+    if (limited) {
+      out.steps.push({ uploadAllReadyTriggered: false, rateLimit: limited });
+    } else if (ready.length > 0) {
+      uploadState.set((async () => {
         try {
           const result = await uploadAllReady();
           console.log("[recover] uploadAllReady finished:", result?.meta);
         } catch (err: any) {
           console.error("[recover] uploadAllReady failed:", err?.message);
+        } finally {
+          uploadState.clear();
         }
-      })();
+      })());
       out.steps.push({ uploadAllReadyTriggered: true });
     }
 
@@ -1013,8 +1072,28 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
   const { adId } = req.body as { adId: number };
   if (!adId) { res.status(400).json({ error: "adId required" }); return; }
 
+  // Same guards as the batch endpoint: don't run alongside an active
+  // batch (double-upload), and don't fire new Meta traffic while the
+  // rate-limit circuit is tripped.
+  if (uploadState.isActive() && !uploadState.isStale()) {
+    const elapsedSec = Math.round(uploadState.elapsedMs() / 1000);
+    res.status(409).json({ success: false, error: `An upload is already in progress (${elapsedSec}s elapsed). Wait for it to complete.` });
+    return;
+  }
+  const limited = rateLimit.info();
+  if (limited) {
+    res.status(429).json({
+      success: false,
+      error: `Meta rate limit active — wait ~${limited.remainingMinutes} min (until ${limited.limitedUntil}) before retrying.`,
+      rateLimit: limited,
+    });
+    return;
+  }
+
+  const job = uploadAdsBatch([adId]);
+  uploadState.set(job);
   try {
-    const result = await uploadAdsBatch([adId]);
+    const result = await job;
     if (result.meta.failed > 0) {
       const err = result.results[0]?.error || "Unknown error";
       res.status(400).json({ success: false, error: err });
@@ -1024,6 +1103,8 @@ app.post("/api/send-to-meta", express.json(), async (req, res) => {
     }
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    uploadState.clear();
   }
 });
 
@@ -1048,6 +1129,20 @@ app.post("/api/send-to-meta-batch", express.json(), async (req, res) => {
       return;
     }
   }
+
+  // Refuse while the Meta rate-limit circuit is tripped — re-sending
+  // during the window holds it open. ?force=true overrides (e.g. the
+  // operator knows the limit cleared early).
+  const limited = rateLimit.info();
+  if (limited && req.query.force !== "true") {
+    res.status(429).json({
+      success: false,
+      error: `Meta rate limit active — wait ~${limited.remainingMinutes} min (until ${limited.limitedUntil}) before retrying, or pass ?force=true to override.`,
+      rateLimit: limited,
+    });
+    return;
+  }
+  if (limited) rateLimit.clear();
 
   // Respond immediately — uploads happen in background
   res.json({ success: true, message: "Upload started. Ads will update as they complete.", meta: { total: 0, success: 0, failed: 0 } });
@@ -1192,6 +1287,14 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 // ── Scheduled uploads polling ───────────────────────────────────────
 setInterval(async () => {
   try {
+    // Don't fire scheduled Meta traffic while the rate-limit circuit
+    // is tripped. Jobs stay "pending" and go out on the first tick
+    // after the window passes.
+    const limited = rateLimit.info();
+    if (limited) {
+      logger.warn("Skipping scheduled uploads — Meta rate limit active", { ...limited });
+      return;
+    }
     const due = await db.select().from(schema.scheduledUploads)
       .where(eq(schema.scheduledUploads.status, "pending"));
 

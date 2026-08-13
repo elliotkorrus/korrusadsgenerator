@@ -11,9 +11,10 @@
  */
 
 import { db, schema } from "./db.js";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { EventEmitter } from "events";
 import { generateAdName } from "../shared/naming.js";
+import { rateLimit } from "./upload-state.js";
 
 const META_API_VERSION = "v21.0";
 const META_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -54,6 +55,19 @@ export function getAllProgress(): UploadProgress[] {
 
 function clearProgress(conceptKey: string) {
   progressMap.delete(conceptKey);
+}
+
+/**
+ * Drop every progress entry. Recovery endpoints call this after
+ * unsticking the queue — a hung Meta fetch never reaches the done/error
+ * emits that schedule per-concept reaping, so without this the SSE
+ * stream replays phantom in-flight uploads until the process restarts.
+ */
+export function clearAllProgress(): number {
+  const n = progressMap.size;
+  progressMap.clear();
+  uploadProgressEmitter.emit("progress");
+  return n;
 }
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -107,6 +121,8 @@ interface UploadResult {
   metaAdId?: string;
   metaCreativeId?: string;
   error?: string;
+  /** Set when the failure was a Meta rate limit — the batch aborts. */
+  rateLimited?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -255,13 +271,110 @@ function formatMetaError(err: any): string {
   return parts.join(" — ");
 }
 
+// ── Meta error classification ───────────────────────────────────────
+
+/**
+ * Auth/token errors: retrying with the same token never helps. Code 100
+ * is deliberately absent — on POST endpoints it means "invalid
+ * parameter" (a validation failure, handled by NON_RETRYABLE below);
+ * only the video-status poll treats it as terminal, at its call site.
+ */
+const AUTH_META_CODES = new Set([190, 102]);
+
+/**
+ * Rate-limit errors: 4 app-level, 17 user-level, 32 page-level,
+ * 613 ads API call volume, 80004 ad-account ads_management throttle.
+ * These are terminal for the current run everywhere — retrying or
+ * continuing to poll just holds the limit window open.
+ */
+const RATE_LIMIT_META_CODES = new Set([4, 17, 32, 613, 80004]);
+const DEFAULT_RATE_LIMIT_WAIT_MIN = 60;
+
+/**
+ * A Meta failure that retrying won't fix within this run. Catch blocks
+ * dispatch on `instanceof` — not message text — so error copy can be
+ * reworded freely without demoting a terminal error back to a retried
+ * "network blip".
+ */
+export class MetaApiTerminalError extends Error {
+  kind: "auth" | "rate_limit" | "processing_failed";
+  metaErrorCode?: number;
+  metaSubcode?: number;
+  retryAfterMinutes?: number;
+
+  constructor(
+    kind: "auth" | "rate_limit" | "processing_failed",
+    message: string,
+    opts: { code?: number; subcode?: number; retryAfterMinutes?: number } = {}
+  ) {
+    super(message);
+    this.name = "MetaApiTerminalError";
+    this.kind = kind;
+    this.metaErrorCode = opts.code;
+    this.metaSubcode = opts.subcode;
+    this.retryAfterMinutes = opts.retryAfterMinutes;
+  }
+}
+
+/** Meta documents `code` as a JSON integer, but normalize defensively. */
+function numericMetaCode(e: any): number | undefined {
+  const code = typeof e?.code === "string" ? Number(e.code) : e?.code;
+  return typeof code === "number" && !Number.isNaN(code) ? code : undefined;
+}
+
+/**
+ * Classify a Meta error object into a terminal error, or null if it may
+ * be transient. Rate limits also trip the shared circuit so every
+ * upload trigger stops firing new Meta traffic until the window passes.
+ * The "Meta rate limit" message prefix is load-bearing for
+ * /admin/reset-only's default scope — keep it stable.
+ */
+function classifyMetaError(
+  e: any,
+  context: string,
+  opts: { tripCircuit?: boolean } = {}
+): MetaApiTerminalError | null {
+  const code = numericMetaCode(e);
+  if (code === undefined) return null;
+  const subcode = typeof e.error_subcode === "number" ? e.error_subcode : undefined;
+  if (AUTH_META_CODES.has(code)) {
+    return new MetaApiTerminalError(
+      "auth",
+      `Meta auth error during ${context}: ${formatMetaError(e)}`,
+      { code, subcode }
+    );
+  }
+  if (RATE_LIMIT_META_CODES.has(code)) {
+    // BUC throttles report their own recovery estimate (in minutes);
+    // fall back to a conservative hour when it's absent.
+    const estimated = Number(e.error_data?.estimated_time_to_regain_access);
+    const retryAfterMinutes =
+      Number.isFinite(estimated) && estimated > 0 ? estimated : DEFAULT_RATE_LIMIT_WAIT_MIN;
+    const err = new MetaApiTerminalError(
+      "rate_limit",
+      `Meta rate limit hit during ${context}: ${formatMetaError(e)}. Wait ~${retryAfterMinutes} min before retrying.`,
+      { code, subcode, retryAfterMinutes }
+    );
+    // tripCircuit:false lets the video poll grant grace polls without
+    // locking out all upload triggers for a transient blip.
+    if (opts.tripCircuit !== false) rateLimit.record(retryAfterMinutes, err.message);
+    return err;
+  }
+  return null;
+}
+
 // ── Retry Utility ───────────────────────────────────────────────────
 
 /** Meta API error codes that should NOT be retried (permission/validation/token) */
-const NON_RETRYABLE_META_CODES = new Set([10, 100, 190, 200]);
+const NON_RETRYABLE_META_CODES = new Set([10, 100, 200]);
 
-/** Meta API error codes that SHOULD be retried (rate limiting/transient) */
-const RETRYABLE_META_CODES = new Set([1, 2, 4, 17]);
+/**
+ * Meta API error codes that SHOULD be retried (transient). Rate-limit
+ * codes deliberately do NOT belong here — they throw
+ * MetaApiTerminalError from checkMetaResponse and must not be
+ * re-attempted while the window is open.
+ */
+const RETRYABLE_META_CODES = new Set([1, 2]);
 
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
@@ -274,6 +387,10 @@ async function retryWithBackoff<T>(
       return await fn();
     } catch (err: any) {
       lastError = err;
+
+      // Terminal errors (auth, rate limit) — never retry. Re-attempting
+      // a rate-limited call just holds the limit window open.
+      if (err instanceof MetaApiTerminalError) throw err;
 
       // Don't retry if we've exhausted attempts
       if (attempt === maxRetries) break;
@@ -325,8 +442,13 @@ async function metaFetch(url: string, init?: RequestInit): Promise<Response> {
 /** Parses a Meta API JSON response and throws enriched errors for retryable codes */
 function checkMetaResponse(data: any): void {
   if (data.error) {
-    // Build a human-readable message instead of raw JSON
     const e = data.error;
+    // Terminal classes (auth, rate limit) throw typed errors from the
+    // shared classifier so every wrapped call site gets the same
+    // policy — and rate limits trip the circuit exactly once, here.
+    const terminal = classifyMetaError(e, "Meta API call");
+    if (terminal) throw terminal;
+    // Build a human-readable message instead of raw JSON
     const userMsg = e.error_user_msg || e.error_user_title || e.message || "Unknown Meta API error";
     const detail = e.error_user_msg && e.message && e.message !== e.error_user_msg
       ? ` (${e.message})`
@@ -491,6 +613,12 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
   let lastStatus: any = null;
   let lastError: any = null;
   let pollCount = 0;
+  let rateLimitStrikes = 0;
+  // A rate-limited status GET gets a short grace at a slow cadence
+  // before we give up: the video's bytes are already fully on Meta, so
+  // two extra cheap polls a minute apart are far cheaper than failing
+  // the concept and re-uploading a 200MB file after recovery.
+  const MAX_RATE_LIMIT_STRIKES = 3;
   console.log(`[meta-video-poll] starting videoId=${videoId}`);
   while (Date.now() - startedAt < MAX_MS) {
     const interval = Date.now() - startedAt < 30_000 ? 2000 : 5000;
@@ -505,28 +633,41 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
       // 401 token-expired response is exactly what was hiding the real
       // problem in the past hour.
       if (statusData.error) {
-        const code = statusData.error.code;
-        const subcode = statusData.error.error_subcode;
-        // Bail fast on errors that won't resolve by retrying:
-        // - 190/100/102: token expired/invalid/permission. Retrying a
-        //   bad token never makes it valid.
-        // - 4/17/32: app/user rate limit. Continuing to poll just
-        //   compounds the throttle — back off so the limit window
-        //   can expire instead of being held open by our retries.
-        if (code === 190 || code === 100 || code === 102) {
-          throw new Error(
-            `Meta auth error during video poll (code=${code}, subcode=${subcode}): ${statusData.error.message}`
-          );
+        // Bail fast on errors that won't resolve by retrying — the
+        // shared classifier covers auth (190/102) and every known
+        // rate-limit code (4/17/32/613/80004).
+        const context = `video poll (videoId=${videoId}, bytes already on Meta)`;
+        const terminal = classifyMetaError(statusData.error, context, { tripCircuit: false });
+        if (terminal?.kind === "rate_limit") {
+          rateLimitStrikes++;
+          if (rateLimitStrikes < MAX_RATE_LIMIT_STRIKES) {
+            console.warn(
+              `[meta-video-poll] videoId=${videoId} rate-limited (strike ${rateLimitStrikes}/${MAX_RATE_LIMIT_STRIKES}) — backing off 60s`
+            );
+            await new Promise((r) => setTimeout(r, 60_000));
+            continue;
+          }
+          // Persistent limit: now trip the circuit and give up.
+          rateLimit.record(terminal.retryAfterMinutes ?? DEFAULT_RATE_LIMIT_WAIT_MIN, terminal.message);
+          throw terminal;
         }
-        if (code === 4 || code === 17 || code === 32) {
-          throw new Error(
-            `Meta rate limit hit during video poll (code=${code}): ${statusData.error.message}. Wait ~1 hour before retrying.`
+        if (terminal) throw terminal;
+        // Code 100 on a status GET is a permissions/unsupported-object
+        // failure — terminal here (on POST endpoints it means invalid
+        // parameter, which the classifier leaves alone).
+        const code = numericMetaCode(statusData.error);
+        if (code === 100) {
+          throw new MetaApiTerminalError(
+            "auth",
+            `Meta auth error during video poll (videoId=${videoId}): ${formatMetaError(statusData.error)}`,
+            { code, subcode: statusData.error.error_subcode }
           );
         }
         lastError = statusData.error;
         console.warn(`[meta-video-poll] videoId=${videoId} poll #${pollCount} returned error:`, statusData.error);
         continue;
       }
+      rateLimitStrikes = 0;
       lastStatus = statusData.status;
       const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
       // Log every 5th poll once we're past the fast initial window, so
@@ -541,18 +682,15 @@ async function waitForVideoReady(videoId: string, accessToken: string): Promise<
         return;
       }
       if (statusData.status?.video_status === "error") {
-        throw new Error(`Video processing failed: ${JSON.stringify(statusData.status)}`);
+        throw new MetaApiTerminalError(
+          "processing_failed",
+          `Video processing failed: ${JSON.stringify(statusData.status)}`
+        );
       }
     } catch (err: any) {
-      // Network blips: log and keep polling. Real Meta errors above
-      // throw and propagate.
-      if (
-        err.message?.startsWith("Meta auth error") ||
-        err.message?.startsWith("Meta rate limit") ||
-        err.message?.startsWith("Video processing failed")
-      ) {
-        throw err;
-      }
+      // Terminal failures propagate; everything else is a network
+      // blip — log and keep polling.
+      if (err instanceof MetaApiTerminalError) throw err;
       console.warn(`[meta-video-poll] videoId=${videoId} poll #${pollCount} network blip:`, err?.message);
     }
   }
@@ -946,8 +1084,14 @@ async function uploadConceptGroup(
   } catch (err: any) {
     // Mark all rows as error
     const errorMsg = err.message || String(err);
+    const rateLimited = err instanceof MetaApiTerminalError && err.kind === "rate_limit";
     emitProgress(conceptKey, { stage: "error", message: errorMsg });
     setTimeout(() => clearProgress(conceptKey), 30000); // Clear after 30s
+    // Guarded on status: an admin may have reset these rows to "ready"
+    // mid-flight (/admin/reset-only) — don't resurrect "error" over
+    // that. The success write above stays unguarded on purpose: once
+    // the ad exists in Meta, recording it beats honoring a reset (a
+    // "ready" row without its metaAdId would re-upload a duplicate).
     await db
       .update(schema.uploadQueue)
       .set({
@@ -955,9 +1099,9 @@ async function uploadConceptGroup(
         errorMessage: errorMsg,
         updatedAt: sql`now()`,
       })
-      .where(inArray(schema.uploadQueue.id, adIds));
+      .where(and(inArray(schema.uploadQueue.id, adIds), eq(schema.uploadQueue.status, "uploading")));
 
-    return { conceptKey, adIds, success: false, error: errorMsg };
+    return { conceptKey, adIds, success: false, error: errorMsg, rateLimited };
   }
 }
 
@@ -1019,14 +1163,26 @@ export async function uploadAdsBatch(adIds: number[]): Promise<{
   const groupList = [...groups.values()];
   const results: UploadResult[] = [];
   let nextIdx = 0;
+  let rateLimitAbort = false;
   const workers = Array.from({ length: Math.min(CONCEPT_CONCURRENCY, groupList.length) }, async () => {
     while (true) {
+      if (rateLimitAbort) return;
       const idx = nextIdx++;
       if (idx >= groupList.length) return;
       const rows = groupList[idx];
       try {
         const result = await uploadConceptGroup(rows, meta);
         results.push(result);
+        if (result.rateLimited) {
+          // Every further Meta call during the window just holds the
+          // limit open — stop pulling groups. Untouched groups stay
+          // "ready" and go out on the next send after the window.
+          rateLimitAbort = true;
+          console.warn(
+            `[uploadAdsBatch] Meta rate limit hit — aborting batch, ${groupList.length - nextIdx} group(s) left untouched in "ready"`
+          );
+          return;
+        }
       } catch (err: any) {
         // uploadConceptGroup already records its own failures into the
         // DB row. Catching here so one bad concept can't kill sibling
