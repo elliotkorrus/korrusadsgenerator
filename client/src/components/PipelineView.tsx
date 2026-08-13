@@ -436,7 +436,8 @@ function PipelineCard({
             </div>
           )}
 
-          {/* Error message */}
+          {/* Error message — clamp to 3 lines (not 1) so the actionable
+              tail of rate-limit errors ("Wait ~60 min…") stays visible */}
           {errorMsg && (
             <div
               style={{
@@ -444,9 +445,11 @@ function PipelineCard({
                 fontSize: 10,
                 lineHeight: "14px",
                 color: "#f85149",
-                whiteSpace: "nowrap",
+                display: "-webkit-box",
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: "vertical" as const,
                 overflow: "hidden",
-                textOverflow: "ellipsis",
+                wordBreak: "break-word",
               }}
               title={errorMsg}
             >

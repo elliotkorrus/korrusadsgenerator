@@ -33,3 +33,51 @@ export const uploadState = {
     return { wasActive, elapsedMs };
   },
 };
+
+// ── Meta rate-limit circuit ─────────────────────────────────────────
+// Tripped when any Meta call reports a rate-limit code. Upload triggers
+// (send-to-meta, send-to-meta-batch, the scheduled-uploads poller,
+// recover-uploads' auto-kick) consult this before firing new Meta
+// traffic, so the limit window actually expires instead of being held
+// open by our own retries.
+
+let rateLimitedUntil: number | null = null;
+let rateLimitReason: string | null = null;
+
+export interface RateLimitInfo {
+  limitedUntil: string;
+  remainingMinutes: number;
+  reason: string | null;
+}
+
+export const rateLimit = {
+  record(retryAfterMinutes: number, reason: string): void {
+    const until = Date.now() + retryAfterMinutes * 60 * 1000;
+    // Multiple calls can trip the limit; keep the furthest-out estimate.
+    if (!rateLimitedUntil || until > rateLimitedUntil) {
+      rateLimitedUntil = until;
+      rateLimitReason = reason;
+    }
+  },
+  isLimited(): boolean {
+    if (rateLimitedUntil === null) return false;
+    if (Date.now() >= rateLimitedUntil) {
+      rateLimitedUntil = null;
+      rateLimitReason = null;
+      return false;
+    }
+    return true;
+  },
+  info(): RateLimitInfo | null {
+    if (!this.isLimited()) return null;
+    return {
+      limitedUntil: new Date(rateLimitedUntil!).toISOString(),
+      remainingMinutes: Math.ceil((rateLimitedUntil! - Date.now()) / 60_000),
+      reason: rateLimitReason,
+    };
+  },
+  clear(): void {
+    rateLimitedUntil = null;
+    rateLimitReason = null;
+  },
+};
